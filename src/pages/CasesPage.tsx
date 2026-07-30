@@ -8,7 +8,7 @@ import {
   Calendar,
   Clock,
   Edit3,
-  Filter,
+  Loader2,
   MapPin,
   Plus,
   Trash2,
@@ -32,13 +32,18 @@ export const CasesPage: React.FC = () => {
 
   const [showCaseModal, setShowCaseModal] = useState<boolean>(false);
   const [editingCase, setEditingCase] = useState<APGCase | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   // Form Fields
-  const [caseNumber, setCaseNumber] = useState<number>(cases.length + 1);
+  const [caseClassId, setCaseClassId] = useState('');
+  const [problemNumber, setProblemNumber] = useState<1 | 2>(1);
   const [week, setWeek] = useState<number>(1);
   const [title, setTitle] = useState('');
   const [theme, setTheme] = useState('');
-  const [date, setDate] = useState('2026-02-09');
+  const [date, setDate] = useState(todayIso);
   const [time, setTime] = useState('08:00');
   const [room, setRoom] = useState('Sala APG 101');
   const [description, setDescription] = useState('');
@@ -47,29 +52,34 @@ export const CasesPage: React.FC = () => {
   const [status, setStatus] = useState<CaseStatus>('planejado');
 
   const filteredCases = cases.filter((c) => {
+    if (selectedClass !== 'all' && c.classId !== selectedClass) return false;
     if (selectedUnit !== 'all' && c.unit.toString() !== selectedUnit) return false;
     return true;
   });
 
   const handleOpenAddModal = () => {
     setEditingCase(null);
-    setCaseNumber(cases.length + 1);
+    setCaseClassId(selectedClass !== 'all' ? selectedClass : '');
+    setProblemNumber(1);
     setWeek(1);
     setTitle('');
     setTheme('');
-    setDate('2026-02-09');
+    setDate(todayIso);
     setTime('08:00');
     setRoom('Sala APG 101');
     setDescription('');
     setLearningObjectivesText('');
     setTeacherInstructions('');
     setStatus('planejado');
+    setFormError(null);
+    setSuccessNotice(null);
     setShowCaseModal(true);
   };
 
   const handleOpenEditModal = (apgCase: APGCase) => {
     setEditingCase(apgCase);
-    setCaseNumber(apgCase.caseNumber);
+    setCaseClassId(apgCase.classId);
+    setProblemNumber(apgCase.problemNumber);
     setWeek(apgCase.week);
     setTitle(apgCase.title);
     setTheme(apgCase.theme);
@@ -80,21 +90,33 @@ export const CasesPage: React.FC = () => {
     setLearningObjectivesText(apgCase.learningObjectives.join('\n'));
     setTeacherInstructions(apgCase.teacherInstructions);
     setStatus(apgCase.status);
+    setFormError(null);
     setShowCaseModal(true);
   };
 
-  const handleSaveSubmit = (e: React.FormEvent) => {
+  const handleSaveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title) return;
+    setFormError(null);
+    if (!caseClassId) {
+      setFormError('Selecione a turma à qual este caso pertence.');
+      return;
+    }
+    if (!title.trim()) {
+      setFormError('Informe o título do caso APG.');
+      return;
+    }
 
     const objectivesList = learningObjectivesText
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
 
-    saveAPGCase({
+    setIsSaving(true);
+    const result = await saveAPGCase({
       id: editingCase?.id || `case_${Date.now()}`,
-      caseNumber,
+      classId: caseClassId,
+      problemNumber,
+      caseNumber: problemNumber,
       week,
       unit: week <= 8 ? 1 : 2, // Auto-computed!
       title,
@@ -107,8 +129,22 @@ export const CasesPage: React.FC = () => {
       teacherInstructions,
       status,
     });
-
+    setIsSaving(false);
+    if (!result.success) {
+      setFormError(result.error || 'Não foi possível salvar o caso APG.');
+      return;
+    }
     setShowCaseModal(false);
+    setSuccessNotice(
+      `Caso S${String(week).padStart(2, '0')}P${problemNumber} salvo e carregado com sucesso.`
+    );
+  };
+
+  const handleDeleteCase = async (apgCase: APGCase) => {
+    const code = `S${String(apgCase.week).padStart(2, '0')}P${apgCase.problemNumber}`;
+    if (!window.confirm(`Deseja excluir o caso ${code}?`)) return;
+    const result = await deleteAPGCase(apgCase.id);
+    if (!result.success) window.alert(result.error || 'Não foi possível excluir o caso APG.');
   };
 
   return (
@@ -164,6 +200,26 @@ export const CasesPage: React.FC = () => {
         </div>
       </div>
 
+      {successNotice && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+          {successNotice}
+        </div>
+      )}
+
+      {filteredCases.length === 0 && (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-10 text-center dark:border-slate-700 dark:bg-slate-900/60">
+          <BookOpen className="mx-auto mb-3 h-8 w-8 text-slate-400" />
+          <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
+            {cases.length === 0
+              ? 'Nenhum caso APG foi cadastrado neste banco de dados.'
+              : 'Nenhum caso corresponde aos filtros de turma e unidade.'}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Use “Novo Caso APG” ou ajuste os filtros acima.
+          </p>
+        </div>
+      )}
+
       {/* Cases List */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {filteredCases.map((c) => (
@@ -174,7 +230,7 @@ export const CasesPage: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                  Caso #{c.caseNumber} • Semana {c.week} ({c.unit === 1 ? '1ª Unidade' : '2ª Unidade'})
+                  S{String(c.week).padStart(2, '0')}P{c.problemNumber} • {c.unit === 1 ? '1ª Unidade' : '2ª Unidade'}
                 </span>
                 <Badge
                   variant={
@@ -226,7 +282,7 @@ export const CasesPage: React.FC = () => {
                   <Edit3 className="h-4 w-4" />
                 </button>
                 <button
-                  onClick={() => deleteAPGCase(c.id)}
+                  onClick={() => handleDeleteCase(c)}
                   className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
                   title="Excluir Caso"
                 >
@@ -258,18 +314,38 @@ export const CasesPage: React.FC = () => {
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            {formError && (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-700 dark:text-rose-300">
+                {formError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Número do Caso
-                </label>
-                <input
-                  type="number"
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Turma</label>
+                <select
                   required
-                  value={caseNumber}
-                  onChange={(e) => setCaseNumber(parseInt(e.target.value) || 1)}
+                  value={caseClassId}
+                  onChange={(e) => setCaseClassId(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
+                >
+                  <option value="">Selecione a turma</option>
+                  {classes
+                    .filter((item) => !selectedSemesterId || item.semesterId === selectedSemesterId)
+                    .map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Problema da Semana</label>
+                <select
+                  value={problemNumber}
+                  onChange={(e) => setProblemNumber(Number(e.target.value) === 2 ? 2 : 1)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  <option value={1}>P1 — primeiro caso</option>
+                  <option value={2}>P2 — segundo caso</option>
+                </select>
               </div>
 
               <div>
@@ -428,9 +504,11 @@ export const CasesPage: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-indigo-900 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-800"
+                disabled={isSaving}
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-900 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Salvar Caso APG
+                {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {isSaving ? 'Salvando...' : 'Salvar Caso APG'}
               </button>
             </div>
           </form>
