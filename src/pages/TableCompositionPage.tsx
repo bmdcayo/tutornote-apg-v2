@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { ClassGroup, Student, TableAllocation } from '../types';
 import { Badge } from '../components/common/Badge';
+import { SOIFilter } from '../components/common/SOIFilter';
 import { getSupabaseClient, isSupabaseEnvConfigured } from '../lib/supabase';
 import { updateStudentTableAllocationInSupabase } from '../services/studentService';
 import {
@@ -30,6 +31,7 @@ export const TableCompositionPage: React.FC = () => {
     tableAllocations,
     selectedSemesterId,
     setSelectedSemesterId,
+    selectedSoiId,
     saveTableAllocation,
     copyUnit1CompositionToUnit2,
     getStudentAllocation,
@@ -40,9 +42,12 @@ export const TableCompositionPage: React.FC = () => {
 
   // Filter classes by selected semester
   const filteredClasses = useMemo(() => {
-    if (!selectedSemesterId) return classes;
-    return classes.filter((c) => c.semesterId === selectedSemesterId);
-  }, [classes, selectedSemesterId]);
+    return classes.filter(
+      (c) =>
+        (!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+        (selectedSoiId === 'all' || c.soiId === selectedSoiId)
+    );
+  }, [classes, selectedSemesterId, selectedSoiId]);
 
   const [selectedClassId, setSelectedClassId] = useState<string>('');
 
@@ -353,6 +358,7 @@ export const TableCompositionPage: React.FC = () => {
 
         {/* Global Toolbar Controls */}
         <div className="flex flex-wrap items-center gap-3">
+          <SOIFilter />
           {/* Semester Selector */}
           <select
             value={selectedSemesterId}
