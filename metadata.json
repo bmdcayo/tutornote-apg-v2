@@ -1,0 +1,6 @@
+{
+  "name": "TutorNote APG",
+  "description": "Acompanhamento longitudinal de estudantes em sessões de tutoria e Aprendizagem em Pequenos Grupos (APG).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
