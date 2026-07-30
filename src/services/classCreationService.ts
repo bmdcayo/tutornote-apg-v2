@@ -5,6 +5,7 @@ export interface CreateClassParams {
   name: string;
   yearSemester: string;
   semesterId: string;
+  soiId: string;
   responsibleTeacher?: string;
   userId?: string;
 }
@@ -129,7 +130,7 @@ export async function createClassInSupabase(
   client: SupabaseClient,
   params: CreateClassParams
 ): Promise<CreateClassResult> {
-  const { name, yearSemester, semesterId, responsibleTeacher, userId } = params;
+  const { name, yearSemester, semesterId, soiId, responsibleTeacher, userId } = params;
 
   // 1. Obter usuário autenticado no Supabase
   let activeUserId = userId;
@@ -172,6 +173,10 @@ export async function createClassInSupabase(
     };
   }
 
+  if (!soiId) {
+    return { success: false, error: 'Selecione o SOI ao qual a turma pertence.' };
+  }
+
   // Confirmar que o semestre existe e está ativo em public.semestres
   const { data: semExist, error: semErr } = await client
     .from('semestres')
@@ -187,17 +192,33 @@ export async function createClassInSupabase(
     };
   }
 
+  const { data: soiExist, error: soiErr } = await client
+    .from('sois')
+    .select('id')
+    .eq('id', soiId)
+    .eq('semestre_id', semesterId)
+    .eq('ativo', true)
+    .maybeSingle();
+
+  if (soiErr || !soiExist) {
+    return {
+      success: false,
+      error: 'O SOI selecionado não pertence ao semestre informado ou está inativo.',
+    };
+  }
+
   // 4. Inserir na tabela public.turmas
   const turmaPayload = {
     nome: name.trim(),
     semestre_id: semesterId,
+    soi_id: soiId,
     professor_id: activeUserId,
   };
 
   const payloadKeys = Object.keys(turmaPayload);
   console.debug('[Cadastro Turma] Chaves enviadas:', payloadKeys);
 
-  const allowedKeys = ['nome', 'semestre_id', 'professor_id'];
+  const allowedKeys = ['nome', 'semestre_id', 'soi_id', 'professor_id'];
   if (
     payloadKeys.length !== allowedKeys.length ||
     !payloadKeys.every((k) => allowedKeys.includes(k))
@@ -212,7 +233,7 @@ export async function createClassInSupabase(
   const { data: createdTurma, error: insertError } = await client
     .from('turmas')
     .insert(turmaPayload)
-    .select('id, nome, semestre_id, professor_id, created_at')
+    .select('id, nome, semestre_id, soi_id, professor_id, created_at')
     .single();
 
   if (insertError || !createdTurma) {
@@ -242,6 +263,7 @@ export async function createClassInSupabase(
     id: createdTurma.id,
     name: createdTurma.nome || name.trim(),
     semesterId: createdTurma.semestre_id || semesterId,
+    soiId: createdTurma.soi_id || soiId,
     yearSemester: semExist.nome || yearSemester || '2026.1',
     responsibleTeacher: profName,
   };
@@ -520,6 +542,7 @@ export async function fetchAllClassesAndMesas(client: SupabaseClient): Promise<{
         id,
         nome,
         semestre_id,
+        soi_id,
         professor_id,
         curso,
         modulo,
@@ -550,6 +573,7 @@ export async function fetchAllClassesAndMesas(client: SupabaseClient): Promise<{
           id,
           nome,
           semestre_id,
+          soi_id,
           professor_id,
           curso,
           modulo,
@@ -583,6 +607,7 @@ export async function fetchAllClassesAndMesas(client: SupabaseClient): Promise<{
         id: t.id,
         name: t.nome || t.name || 'Turma APG',
         semesterId: t.semestre_id || t.semester_id || '',
+        soiId: t.soi_id || '',
         yearSemester: semesterName,
         responsibleTeacher: profName,
       };
@@ -606,4 +631,3 @@ export async function fetchAllClassesAndMesas(client: SupabaseClient): Promise<{
     return { classes: [], groups: [] };
   }
 }
-
