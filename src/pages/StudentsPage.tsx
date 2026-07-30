@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Student, StudentCalculatedSummary } from '../types';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
+import { SOIFilter } from '../components/common/SOIFilter';
 import {
   AlertTriangle,
   BookOpen,
@@ -48,6 +49,7 @@ export const StudentsPage: React.FC = () => {
     evaluations,
     settings,
     selectedSemesterId,
+    selectedSoiId,
     selectedClass,
     setSelectedClass,
     selectedGroup,
@@ -147,7 +149,9 @@ export const StudentsPage: React.FC = () => {
   };
 
   const semesterClasses = classes.filter(
-    (c) => !selectedSemesterId || c.semesterId === selectedSemesterId
+    (c) =>
+      (!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+      (selectedSoiId === 'all' || c.soiId === selectedSoiId)
   );
   const semesterClassIds = new Set(semesterClasses.map((c) => c.id));
 
@@ -165,7 +169,7 @@ export const StudentsPage: React.FC = () => {
     // 2. Turma & Semester
     if (selectedClass !== 'all') {
       if (s.classId !== selectedClass) return false;
-    } else if (selectedSemesterId) {
+    } else if (selectedSemesterId || selectedSoiId !== 'all') {
       // Um aluno ainda sem alocação deve permanecer visível para que o
       // professor consiga atribuir sua turma e suas mesas pela própria tela.
       if (s.classId && !semesterClassIds.has(s.classId)) return false;
@@ -547,6 +551,7 @@ export const StudentsPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto">
+          <SOIFilter />
           {/* Status Filter: Ativos (default), Inativos, Todos */}
           <div className="min-w-[140px]">
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -1003,7 +1008,11 @@ export const StudentsPage: React.FC = () => {
                 >
                   {(showAllSemestersForTableModal
                     ? classes
-                    : classes.filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId || c.id === tableClassId)
+                    : classes.filter((c) =>
+                        ((!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+                          (selectedSoiId === 'all' || c.soiId === selectedSoiId)) ||
+                        c.id === tableClassId
+                      )
                   ).map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -1585,7 +1594,10 @@ export const StudentsPage: React.FC = () => {
                 </option>
                 {(showAllSemestersForAddModal
                   ? classes
-                  : classes.filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId)
+                  : classes.filter((c) =>
+                      (!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+                      (selectedSoiId === 'all' || c.soiId === selectedSoiId)
+                    )
                 ).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
