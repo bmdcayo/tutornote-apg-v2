@@ -1,351 +1,633 @@
-import { createClassInSupabase, deleteClassInSupabase, fetchClassLinkedCounts, fetchMesasForTurma } from './classCreationService';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { Class, ClassGroup } from '../types';
 
-/**
- * Suite de Testes para Validação da Criação e Carregamento de Turmas e Mesas no Supabase.
- * Executa as 10 verificações obrigatórias.
- */
+export interface CreateClassParams {
+  name: string;
+  yearSemester: string;
+  semesterId: string;
+  soiId: string;
+  responsibleTeacher?: string;
+  userId?: string;
+}
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    console.error(`❌ FALHA NO TESTE: ${message}`);
-    throw new Error(`Test failed: ${message}`);
-  } else {
-    console.log(`✅ SUCESSO: ${message}`);
+export interface CreateClassResult {
+  success: boolean;
+  class?: Class;
+  groups?: ClassGroup[];
+  error?: string;
+  mesasPending?: boolean;
+}
+
+export interface ActiveSemester {
+  id: string;
+  nome: string;
+  data_inicio?: string;
+  data_fim?: string;
+  ativo?: boolean;
+}
+
+/**
+  * Traduz erros retornados do Supabase/PostgreSQL para mensagens em português amigáveis.
+  */
+export function translateSupabaseError(error: any): string {
+  if (!error) return 'Erro ao cadastrar a turma no Supabase. Operação rejeitada pelo banco de dados.';
+
+  const msg = (error.message || '').toLowerCase();
+  const details = (error.details || '').toLowerCase();
+  const code = error.code || '';
+
+  if (
+    msg.includes('turmas_semestre_id_fkey') ||
+    details.includes('turmas_semestre_id_fkey') ||
+    (code === '23503' && (msg.includes('semestre') || details.includes('semestre')))
+  ) {
+    return 'O semestre selecionado não existe mais. Atualize a página e selecione um semestre válido.';
+  }
+
+  if (
+    msg.includes('turmas_professor_id_fkey') ||
+    details.includes('turmas_professor_id_fkey') ||
+    (code === '23503' && (msg.includes('professor') || details.includes('professor') || msg.includes('user')))
+  ) {
+    return 'O perfil do docente responsável não foi encontrado.';
+  }
+
+  if (
+    code === '42501' ||
+    msg.includes('row-level security') ||
+    msg.includes('permission denied') ||
+    msg.includes('not authorized')
+  ) {
+    return 'Você não possui autorização para cadastrar esta turma.';
+  }
+
+  return error.message || 'Erro ao cadastrar a turma no Supabase. Operação rejeitada pelo banco de dados.';
+}
+
+/**
+ * Consulta todos os semestres cadastrados no Supabase ordenados por data_inicio.
+ */
+export async function fetchActiveSemesters(client: SupabaseClient): Promise<{
+  semestres: ActiveSemester[];
+  error?: string;
+}> {
+  try {
+    const { data, error } = await client
+      .from('semestres')
+      .select('id, nome, data_inicio, data_fim, ativo')
+      .eq('ativo', true)
+      .order('data_inicio', { ascending: true });
+
+    if (error) {
+      console.error('[Supabase fetchSemesters Error]', error.message);
+      return { semestres: [], error: translateSupabaseError(error) };
+    }
+
+    return { semestres: data || [] };
+  } catch (err: any) {
+    console.error('[Supabase fetchSemesters Exception]', err);
+    return { semestres: [], error: err.message || 'Erro ao carregar semestres do banco de dados.' };
   }
 }
 
-export async function runClassAndTableTests() {
-  console.log('\n======================================================');
-  console.log('🧪 INICIANDO AUDITORIA E TESTES DE TURMAS E MESAS (SUPABASE)');
-  console.log('======================================================\n');
+export const fetchAllSemesters = fetchActiveSemesters;
 
-  let passed = 0;
+/**
+ * Seleciona automaticamente o semestre mais próximo da data atual
+ */
+export function findClosestSemester(semestres: ActiveSemester[]): ActiveSemester | undefined {
+  if (!semestres || semestres.length === 0) return undefined;
 
-  // Mock de dados da resposta do Supabase
-  const mockUserId = 'usr_prof_12345';
-  const mockTurmaId = 'turma_uuid_9999';
-  const mockSemesterId = 'sem_uuid_2026';
-  const mockSoiId = 'soi_uuid_2';
+  const now = new Date().getTime();
+  let closest = semestres[0];
+  let minDiff = Infinity;
 
-  // Teste 1: A turma é realmente inserida em public.turmas
-  console.log('--- Teste 1: Registro inserido em public.turmas ---');
-  let queriedTurmasTablePayload: any = null;
-
-  const mockSupabaseSuccess: any = {
-    auth: {
-      getUser: async () => ({
-        data: { user: { id: mockUserId } },
-        error: null,
-      }),
-    },
-    from: (table: string) => {
-      if (table === 'profiles') {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { id: mockUserId, nome: 'Prof. Teste' },
-                error: null,
-              }),
-            }),
-          }),
-        };
+  for (const sem of semestres) {
+    if (sem.data_inicio && sem.data_fim) {
+      const start = new Date(sem.data_inicio).getTime();
+      const end = new Date(sem.data_fim).getTime();
+      if (now >= start && now <= end) {
+        return sem;
       }
-      if (table === 'semestres') {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { id: mockSemesterId, nome: '2026.1' },
-                error: null,
-              }),
-              limit: async () => ({ data: [{ id: mockSemesterId }], error: null }),
-            }),
-            limit: async () => ({ data: [{ id: mockSemesterId }], error: null }),
-          }),
-        };
+      const diffStart = Math.abs(now - start);
+      const diffEnd = Math.abs(now - end);
+      const localMin = Math.min(diffStart, diffEnd);
+      if (localMin < minDiff) {
+        minDiff = localMin;
+        closest = sem;
       }
-      if (table === 'turmas') {
-        return {
-          insert: (payload: any) => {
-            queriedTurmasTablePayload = payload;
-            return {
-              select: () => ({
-                single: async () => ({
-                  data: {
-                    id: mockTurmaId,
-                    nome: payload.nome,
-                    semestre_id: payload.semestre_id,
-                    professor_id: payload.professor_id,
-                  },
-                  error: null,
-                }),
-              }),
-            };
-          },
-        };
-      }
-      if (table === 'mesas') {
-        return {
-          select: () => ({
-            eq: () => ({
-              order: async () => ({
-                data: [
-                  { id: 'mesa_id_1', nome: 'Mesa 1', numero: 1, turma_id: mockTurmaId, limite_alunos: 10 },
-                  { id: 'mesa_id_2', nome: 'Mesa 2', numero: 2, turma_id: mockTurmaId, limite_alunos: 10 },
-                  { id: 'mesa_id_3', nome: 'Mesa 3', numero: 3, turma_id: mockTurmaId, limite_alunos: 10 },
-                ],
-                error: null,
-              }),
-            }),
-          }),
-        };
-      }
-      return {};
-    },
-  };
+    }
+  }
 
-  const result1 = await createClassInSupabase(mockSupabaseSuccess, {
-    name: 'Medicina 2026.1 - APG I',
-    yearSemester: '2026.1',
-    semesterId: mockSemesterId,
-    soiId: mockSoiId,
-    responsibleTeacher: 'Prof. Teste',
-    userId: mockUserId,
-  });
-
-  assert(result1.success === true, 'Operação retornou sucesso para o Supabase');
-  assert(queriedTurmasTablePayload !== null, 'Inserção em public.turmas foi executada no banco');
-  assert(queriedTurmasTablePayload.nome === 'Medicina 2026.1 - APG I', 'Nome da turma enviado corretamente ao Supabase');
-  passed++;
-
-  // Teste 2: O professor_id é o usuário autenticado (session.user.id)
-  console.log('\n--- Teste 2: professor_id é o usuário autenticado ---');
-  assert(queriedTurmasTablePayload.professor_id === mockUserId, `professor_id (${queriedTurmasTablePayload.professor_id}) é igual a session.user.id (${mockUserId})`);
-  passed++;
-
-  // Teste 3: A interface NÃO mostra turma se o banco rejeitar o insert
-  console.log('\n--- Teste 3: Interface rejeita turma se insert no Supabase falhar ---');
-  const mockSupabaseFailure: any = {
-    auth: {
-      getUser: async () => ({
-        data: { user: { id: mockUserId } },
-        error: null,
-      }),
-    },
-    from: (table: string) => {
-      if (table === 'profiles') {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { id: mockUserId, nome: 'Prof. Teste' },
-                error: null,
-              }),
-            }),
-          }),
-        };
-      }
-      if (table === 'semestres') {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { id: mockSemesterId, nome: '2026.1' },
-                error: null,
-              }),
-              limit: async () => ({ data: [{ id: mockSemesterId }], error: null }),
-            }),
-          }),
-        };
-      }
-      if (table === 'turmas') {
-        return {
-          insert: () => ({
-            select: () => ({
-              single: async () => ({
-                data: null,
-                error: { message: 'violates foreign key constraint "turmas_semestre_id_fkey"' },
-              }),
-            }),
-          }),
-        };
-      }
-      return {};
-    },
-  };
-
-  const resultFail = await createClassInSupabase(mockSupabaseFailure, {
-    name: 'Turma Invalida',
-    yearSemester: '2026.1',
-    semesterId: mockSemesterId,
-    soiId: mockSoiId,
-    userId: mockUserId,
-  });
-
-  assert(resultFail.success === false, 'Retorna success = false quando o Supabase rejeita a inserção');
-  assert(resultFail.class === undefined, 'Nenhuma turma é criada no estado da interface');
-  assert(
-    resultFail.error === 'O semestre selecionado não existe mais. Atualize a página e selecione um semestre válido.',
-    'Mensagem de erro traduzida corretamente para turmas_semestre_id_fkey'
-  );
-  passed++;
-
-  // Teste 4: Trigger cria exatamente 3 mesas
-  console.log('\n--- Teste 4: O trigger cria exatamente três mesas (Mesa 1, 2, 3) ---');
-  assert(result1.groups?.length === 3, `Retornadas exatamente 3 mesas (obtido: ${result1.groups?.length})`);
-  passed++;
-
-  // Teste 5: As mesas possuem números 1, 2 e 3
-  console.log('\n--- Teste 5: Mesas possuem nomes/números 1, 2 e 3 ---');
-  const groupNames = result1.groups?.map((g) => g.name) || [];
-  assert(groupNames.includes('Mesa 1'), 'Contém Mesa 1');
-  assert(groupNames.includes('Mesa 2'), 'Contém Mesa 2');
-  assert(groupNames.includes('Mesa 3'), 'Contém Mesa 3');
-  passed++;
-
-  // Teste 6: Não existem mesas duplicadas
-  console.log('\n--- Teste 6: Não existem mesas duplicadas ---');
-  const uniqueGroupIds = new Set(result1.groups?.map((g) => g.id));
-  assert(uniqueGroupIds.size === result1.groups?.length, 'Todas as 3 mesas possuem IDs únicos sem duplicatas');
-  passed++;
-
-  // Teste 7: A interface carrega as mesas após criar a turma
-  console.log('\n--- Teste 7: Interface carrega mesas após criação ---');
-  const retryResult = await fetchMesasForTurma(mockSupabaseSuccess, mockTurmaId);
-  assert(retryResult.success === true, 'Consulta de mesas de uma turma específica com retorno imediato');
-  assert(retryResult.groups?.length === 3, 'Mesas carregadas e associadas ao turma_id');
-  passed++;
-
-  // Teste 8: Atualizar o navegador preserva turma e mesas (IDs persistidos no Supabase)
-  console.log('\n--- Teste 8: IDs e dados persistidos no Supabase (Sobrevivem ao refresh) ---');
-  assert(result1.class?.id === mockTurmaId, `ID da turma é o UUID do Supabase (${mockTurmaId})`);
-  passed++;
-
-  // Teste 9: A composição das mesas utiliza os IDs reais
-  console.log('\n--- Teste 9: Composição de mesas utiliza IDs reais do banco ---');
-  assert(result1.groups?.[0].id === 'mesa_id_1', 'ID da Mesa 1 é o ID real da tabela public.mesas (mesa_id_1)');
-  assert(result1.groups?.[1].id === 'mesa_id_2', 'ID da Mesa 2 é o ID real da tabela public.mesas (mesa_id_2)');
-  assert(result1.groups?.[2].id === 'mesa_id_3', 'ID da Mesa 3 é o ID real da tabela public.mesas (mesa_id_3)');
-  passed++;
-
-  // Teste 10: Nenhum dado demonstrativo é utilizado quando conectado ao Supabase
-  console.log('\n--- Teste 10: Nenhum dado demonstrativo/mock é utilizado em produção ---');
-  assert(!result1.class?.id.startsWith('cls_17'), 'ID da turma não usa gerador local mock cls_timestamp');
-  assert(!result1.groups?.[0].id.startsWith('grp_demo'), 'IDs das mesas não utilizam valores mock demonstrativos');
-  passed++;
-
-  // Teste 11: Exclusão com erro de RLS traduz mensagem corretamente
-  console.log('\n--- Teste 11: Exclusão com falha de RLS (42501) ---');
-  const mockSupabaseRLSDelete: any = {
-    auth: {
-      getUser: async () => ({
-        data: { user: { id: mockUserId } },
-        error: null,
-      }),
-    },
-    from: (table: string) => ({
-      delete: () => ({
-        eq: () => ({
-          eq: () => ({
-            select: async () => ({
-              data: null,
-              error: { code: '42501', message: 'new row violates row-level security policy' },
-            }),
-          }),
-          select: async () => ({
-            data: null,
-            error: { code: '42501', message: 'new row violates row-level security policy' },
-          }),
-        }),
-      }),
-    }),
-  };
-
-  const deleteRlsRes = await deleteClassInSupabase(mockSupabaseRLSDelete, mockTurmaId, false);
-  assert(deleteRlsRes.success === false, 'Exclusão rejeitada por RLS');
-  assert(
-    deleteRlsRes.error === 'Você não possui permissão para excluir esta turma.',
-    'Mensagem de erro de RLS traduzida corretamente'
-  );
-  passed++;
-
-  // Teste 12: Exclusão com erro de Foreign Key (23503) traduz mensagem corretamente
-  console.log('\n--- Teste 12: Exclusão com restrição de Chave Estrangeira (23503) ---');
-  const mockSupabaseFKDelete: any = {
-    auth: {
-      getUser: async () => ({
-        data: { user: { id: mockUserId } },
-        error: null,
-      }),
-    },
-    from: (table: string) => ({
-      delete: () => ({
-        eq: () => ({
-          eq: () => ({
-            select: async () => ({
-              data: null,
-              error: { code: '23503', message: 'violates foreign key constraint' },
-            }),
-          }),
-          select: async () => ({
-            data: null,
-            error: { code: '23503', message: 'violates foreign key constraint' },
-          }),
-        }),
-      }),
-    }),
-  };
-
-  const deleteFkRes = await deleteClassInSupabase(mockSupabaseFKDelete, mockTurmaId, false);
-  assert(deleteFkRes.success === false, 'Exclusão rejeitada por Foreign Key');
-  assert(
-    deleteFkRes.error === 'Não foi possível excluir a turma porque existem registros vinculados sem regra de exclusão em cascata.',
-    'Mensagem de erro de Chave Estrangeira traduzida corretamente'
-  );
-  passed++;
-
-  // Teste 13: Exclusão bem sucedida no Supabase
-  console.log('\n--- Teste 13: Exclusão de turma bem-sucedida ---');
-  const mockSupabaseSuccessDelete: any = {
-    auth: {
-      getUser: async () => ({
-        data: { user: { id: mockUserId } },
-        error: null,
-      }),
-    },
-    from: (table: string) => ({
-      delete: () => ({
-        eq: () => ({
-          eq: () => ({
-            select: async () => ({
-              data: [{ id: mockTurmaId }],
-              error: null,
-            }),
-          }),
-          select: async () => ({
-            data: [{ id: mockTurmaId }],
-            error: null,
-          }),
-        }),
-      }),
-    }),
-  };
-
-  const deleteSuccessRes = await deleteClassInSupabase(mockSupabaseSuccessDelete, mockTurmaId, false);
-  assert(deleteSuccessRes.success === true, 'Turma excluída com sucesso no banco');
-  passed++;
-
-  console.log('\n======================================================');
-  console.log(`🎉 TODOS OS 13 TESTES DE AUDITORIA DE TURMAS, MESAS E EXCLUSÃO PASSARAM COM SUCESSO!`);
-  console.log('======================================================\n');
+  return closest;
 }
 
-// Executa os testes se invocado diretamente
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runClassAndTableTests().catch((err) => {
-    console.error('Falha nos testes:', err);
-    process.exit(1);
-  });
+/**
+ * Insere uma nova turma na tabela public.turmas do Supabase e consulta
+ * as 3 mesas criadas automaticamente pelo trigger do banco de dados (public.mesas).
+ */
+export async function createClassInSupabase(
+  client: SupabaseClient,
+  params: CreateClassParams
+): Promise<CreateClassResult> {
+  const { name, yearSemester, semesterId, soiId, responsibleTeacher, userId } = params;
+
+  // 1. Obter usuário autenticado no Supabase
+  let activeUserId = userId;
+  try {
+    const { data: authData, error: authErr } = await client.auth.getUser();
+    if (!authErr && authData?.user?.id) {
+      activeUserId = authData.user.id;
+    }
+  } catch (err) {
+    console.warn('[Supabase Auth Check Warning]', err);
+  }
+
+  if (!activeUserId) {
+    return {
+      success: false,
+      error: 'Seu perfil de professor não foi encontrado. Entre novamente ou procure o administrador.',
+    };
+  }
+
+  // 2. Confirmar existência do perfil do professor em public.profiles (não bloqueante)
+  try {
+    const { data: profileData } = await client
+      .from('profiles')
+      .select('id')
+      .eq('id', activeUserId)
+      .maybeSingle();
+
+    if (!profileData) {
+      console.warn('[Supabase Profile Check Warning] Perfil não encontrado para ID:', activeUserId);
+    }
+  } catch (pErr) {
+    console.warn('[Supabase Profile Check Exception]', pErr);
+  }
+
+  // 3. Validar semestre_id
+  if (!semesterId) {
+    return {
+      success: false,
+      error: 'Nenhum semestre letivo ativo foi encontrado. Cadastre ou ative um semestre antes de criar a turma.',
+    };
+  }
+
+  if (!soiId) {
+    return { success: false, error: 'Selecione o SOI ao qual a turma pertence.' };
+  }
+
+  // Confirmar que o semestre existe e está ativo em public.semestres
+  const { data: semExist, error: semErr } = await client
+    .from('semestres')
+    .select('id, nome')
+    .eq('id', semesterId)
+    .eq('ativo', true)
+    .maybeSingle();
+
+  if (semErr || !semExist) {
+    return {
+      success: false,
+      error: 'O semestre selecionado não existe mais. Atualize a página e selecione um semestre válido.',
+    };
+  }
+
+  const { data: soiExist, error: soiErr } = await client
+    .from('sois')
+    .select('id')
+    .eq('id', soiId)
+    .eq('semestre_id', semesterId)
+    .eq('ativo', true)
+    .maybeSingle();
+
+  if (soiErr || !soiExist) {
+    return {
+      success: false,
+      error: 'O SOI selecionado não pertence ao semestre informado ou está inativo.',
+    };
+  }
+
+  // 4. Inserir na tabela public.turmas
+  const turmaPayload = {
+    nome: name.trim(),
+    semestre_id: semesterId,
+    soi_id: soiId,
+    professor_id: activeUserId,
+  };
+
+  const payloadKeys = Object.keys(turmaPayload);
+  console.debug('[Cadastro Turma] Chaves enviadas:', payloadKeys);
+
+  const allowedKeys = ['nome', 'semestre_id', 'soi_id', 'professor_id'];
+  if (
+    payloadKeys.length !== allowedKeys.length ||
+    !payloadKeys.every((k) => allowedKeys.includes(k))
+  ) {
+    console.error('[Cadastro Turma] Bloqueado! Chaves enviadas inválidas:', payloadKeys);
+    return {
+      success: false,
+      error: 'Erro de validação: payload de cadastro de turma contém campos inválidos.',
+    };
+  }
+
+  const { data: createdTurma, error: insertError } = await client
+    .from('turmas')
+    .insert(turmaPayload)
+    .select('id, nome, semestre_id, soi_id, professor_id, created_at')
+    .single();
+
+  if (insertError || !createdTurma) {
+    console.error('[Supabase Turmas Insert Error]', insertError);
+    return {
+      success: false,
+      error: translateSupabaseError(insertError),
+    };
+  }
+
+  let profName = 'Docente não identificado';
+  try {
+    const { data: profData } = await client
+      .from('profiles')
+      .select('nome')
+      .eq('id', activeUserId)
+      .maybeSingle();
+    if (profData?.nome) {
+      profName = profData.nome;
+    }
+  } catch (pErr) {
+    console.warn('[Supabase Fetch Professor Profile Warning]', pErr);
+  }
+
+  // 5. Mapear turma criada
+  const newClass: Class = {
+    id: createdTurma.id,
+    name: createdTurma.nome || name.trim(),
+    semesterId: createdTurma.semestre_id || semesterId,
+    soiId: createdTurma.soi_id || soiId,
+    yearSemester: semExist.nome || yearSemester || '2026.1',
+    responsibleTeacher: profName,
+  };
+
+  // 6. Consultar public.mesas usando o turma_id (geradas pelo trigger)
+  const turmaId = createdTurma.id;
+  let fetchedMesas: any[] = [];
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: mData } = await client
+      .from('mesas')
+      .select('*')
+      .eq('turma_id', turmaId)
+      .order('numero', { ascending: true });
+
+    if (mData && mData.length >= 3) {
+      fetchedMesas = mData;
+      break;
+    }
+    if (mData && mData.length > 0) {
+      fetchedMesas = mData;
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  const groups: ClassGroup[] = fetchedMesas.map((m: any) => ({
+    id: m.id,
+    name: m.nome || m.name || (m.numero ? `Mesa ${m.numero}` : 'Mesa'),
+    classId: m.turma_id || turmaId,
+    limitStudents: m.limite_alunos || m.limite || 10,
+  }));
+
+  if (groups.length >= 3) {
+    return {
+      success: true,
+      class: newClass,
+      groups,
+    };
+  }
+
+  return {
+    success: true,
+    class: newClass,
+    groups,
+    mesasPending: true,
+    error: 'A turma foi criada, mas as mesas ainda não foram carregadas.',
+  };
+}
+
+/**
+ * Re-consulta public.mesas para uma turma específica no Supabase.
+ */
+export async function fetchMesasForTurma(
+  client: SupabaseClient,
+  turmaId: string
+): Promise<{ success: boolean; groups?: ClassGroup[]; error?: string }> {
+  try {
+    const { data: mData, error } = await client
+      .from('mesas')
+      .select('*')
+      .eq('turma_id', turmaId)
+      .order('numero', { ascending: true });
+
+    if (error) {
+      return { success: false, error: translateSupabaseError(error) };
+    }
+
+    if (mData && mData.length > 0) {
+      const groups: ClassGroup[] = mData.map((m: any) => ({
+        id: m.id,
+        name: m.nome || m.name || (m.numero ? `Mesa ${m.numero}` : 'Mesa'),
+        classId: m.turma_id || turmaId,
+        limitStudents: m.limite_alunos || m.limite || 10,
+      }));
+
+      return { success: true, groups };
+    }
+
+    return {
+      success: false,
+      error: 'As mesas ainda não foram geradas no banco de dados. Tente novamente em instantes.',
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Erro ao consultar mesas no Supabase.' };
+  }
+}
+
+export interface ClassLinkedCounts {
+  alunosCount: number;
+  mesasCount: number;
+  casosCount: number;
+  avaliacoesCount: number;
+  isHasAcademicData: boolean;
+}
+
+/**
+ * Consulta a quantidade de registros vinculados a uma turma antes de autorizar a exclusão.
+ */
+export async function fetchClassLinkedCounts(
+  client: SupabaseClient,
+  classId: string
+): Promise<ClassLinkedCounts> {
+  let alunosCount = 0;
+  let mesasCount = 0;
+  let casosCount = 0;
+  let avaliacoesCount = 0;
+
+  try {
+    const { data: alocs } = await client
+      .from('alocacoes_mesa')
+      .select('aluno_id')
+      .eq('turma_id', classId);
+    if (alocs) {
+      alunosCount = new Set(alocs.map((a: any) => a.aluno_id).filter(Boolean)).size;
+    }
+  } catch (err) {
+    console.warn('[Counts Check Alocações Error]', err);
+  }
+
+  try {
+    const { count: cMesas } = await client
+      .from('mesas')
+      .select('*', { count: 'exact', head: true })
+      .eq('turma_id', classId);
+    mesasCount = cMesas || 0;
+  } catch (err) {
+    console.warn('[Counts Check Mesas Error]', err);
+  }
+
+  try {
+    const { count: cCasos } = await client
+      .from('casos_apg')
+      .select('*', { count: 'exact', head: true })
+      .eq('turma_id', classId);
+    casosCount = cCasos || 0;
+  } catch (err) {
+    console.warn('[Counts Check Casos Error]', err);
+  }
+
+  try {
+    const { count: cEvals } = await client
+      .from('avaliacoes')
+      .select('*', { count: 'exact', head: true })
+      .eq('turma_id', classId);
+    avaliacoesCount = cEvals || 0;
+  } catch (err) {
+    console.warn('[Counts Check Avaliacoes Error]', err);
+  }
+
+  // As 3 mesas automáticas não são consideradas impedimento para excluir uma turma vazia
+  const isHasAcademicData = alunosCount > 0 || casosCount > 0 || avaliacoesCount > 0;
+
+  return {
+    alunosCount,
+    mesasCount,
+    casosCount,
+    avaliacoesCount,
+    isHasAcademicData,
+  };
+}
+
+/**
+ * Executa o comando de exclusão da turma no Supabase e trata erros de RLS/FK.
+ */
+export async function deleteClassInSupabase(
+  client: SupabaseClient,
+  classId: string,
+  isAdmin: boolean = false
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const {
+      data: { user },
+      error: userError,
+    } = await client.auth.getUser();
+
+    if (userError || !user) {
+      return {
+        success: false,
+        error: 'Você não possui permissão para excluir esta turma. Usuário não autenticado.',
+      };
+    }
+
+    let query = client.from('turmas').delete().eq('id', classId);
+
+    if (!isAdmin) {
+      query = query.eq('professor_id', user.id);
+    }
+
+    const { data: turmaExcluida, error: deleteError } = await query.select('id');
+
+    if (deleteError) {
+      // Registrar log limpo no console de desenvolvimento sem expor tokens ou chaves
+      console.error('[Supabase Delete Turma Error]', {
+        code: deleteError.code,
+        message: deleteError.message,
+        details: deleteError.details,
+        hint: deleteError.hint,
+      });
+
+      const code = deleteError.code || '';
+      const msg = (deleteError.message || '').toLowerCase();
+      const details = (deleteError.details || '').toLowerCase();
+
+      if (
+        code === '23503' ||
+        msg.includes('foreign key constraint') ||
+        details.includes('foreign key constraint') ||
+        msg.includes('violates foreign key')
+      ) {
+        return {
+          success: false,
+          error: 'Não foi possível excluir a turma porque existem registros vinculados sem regra de exclusão em cascata.',
+        };
+      }
+
+      if (
+        code === '42501' ||
+        msg.includes('row-level security') ||
+        msg.includes('permission denied') ||
+        msg.includes('not authorized')
+      ) {
+        return {
+          success: false,
+          error: 'Você não possui permissão para excluir esta turma.',
+        };
+      }
+
+      if (
+        msg.includes('fetch failed') ||
+        msg.includes('network') ||
+        msg.includes('connection')
+      ) {
+        return {
+          success: false,
+          error: 'Não foi possível comunicar-se com o banco de dados. Tente novamente.',
+        };
+      }
+
+      return {
+        success: false,
+        error: deleteError.message || 'Erro ao excluir a turma do banco de dados.',
+      };
+    }
+
+    if (!turmaExcluida || turmaExcluida.length === 0) {
+      return {
+        success: false,
+        error: 'A turma não foi excluída. Você não possui autorização ou o registro não foi encontrado.',
+      };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('[Supabase Delete Exception]', {
+      message: err?.message,
+      name: err?.name,
+    });
+    return {
+      success: false,
+      error: 'Não foi possível comunicar-se com o banco de dados. Tente novamente.',
+    };
+  }
+}
+
+/**
+ * Consulta todas as turmas e mesas cadastradas no Supabase incluindo o relacionamento com semestres.
+ */
+export async function fetchAllClassesAndMesas(client: SupabaseClient): Promise<{
+  classes: Class[];
+  groups: ClassGroup[];
+}> {
+  try {
+    const { data: tData, error: tErr } = await client
+      .from('turmas')
+      .select(`
+        id,
+        nome,
+        semestre_id,
+        soi_id,
+        professor_id,
+        curso,
+        modulo,
+        created_at,
+        semestres (
+          id,
+          nome,
+          data_inicio,
+          data_fim,
+          ativo
+        ),
+        professor:profiles!turmas_professor_id_fkey (
+          id,
+          nome,
+          email,
+          papel
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    let finalTurmas = tData;
+
+    if (tErr) {
+      console.error('[Supabase Fetch Turmas Error]', tErr.message);
+      const { data: fallbackTurmas } = await client
+        .from('turmas')
+        .select(`
+          id,
+          nome,
+          semestre_id,
+          soi_id,
+          professor_id,
+          curso,
+          modulo,
+          created_at,
+          semestres (
+            id,
+            nome,
+            data_inicio,
+            data_fim,
+            ativo
+          ),
+          professor:profiles (
+            id,
+            nome,
+            email,
+            papel
+          )
+        `)
+        .order('created_at', { ascending: false });
+      finalTurmas = fallbackTurmas;
+    }
+
+    const classes: Class[] = (finalTurmas || []).map((t: any) => {
+      const semObj = Array.isArray(t.semestres) ? t.semestres[0] : t.semestres;
+      const semesterName = semObj?.nome || '';
+
+      const profObj = Array.isArray(t.professor) ? t.professor[0] : (t.professor || (Array.isArray(t.profiles) ? t.profiles[0] : t.profiles));
+      const profName = profObj?.nome || 'Docente não identificado';
+
+      return {
+        id: t.id,
+        name: t.nome || t.name || 'Turma APG',
+        semesterId: t.semestre_id || t.semester_id || '',
+        soiId: t.soi_id || '',
+        yearSemester: semesterName,
+        responsibleTeacher: profName,
+      };
+    });
+
+    const { data: mData } = await client
+      .from('mesas')
+      .select('*')
+      .order('numero', { ascending: true });
+
+    const groups: ClassGroup[] = (mData || []).map((m: any) => ({
+      id: m.id,
+      name: m.nome || m.name || (m.numero ? `Mesa ${m.numero}` : 'Mesa'),
+      classId: m.turma_id || m.class_id,
+      limitStudents: m.limite_alunos || m.limite || 10,
+    }));
+
+    return { classes, groups };
+  } catch (err) {
+    console.error('[Supabase Fetch All Error]', err);
+    return { classes: [], groups: [] };
+  }
 }
