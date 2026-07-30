@@ -10,29 +10,9 @@ type ServiceResult<T = undefined> = {
 
 const friendlyError = (error: any, fallback: string): string => {
   const message = String(error?.message || '');
-  const details = String(error?.details || '');
-  const lower = `${message} ${details}`.toLowerCase();
-  const code = String(error?.code || '');
-
-  if (code === '23505') {
-    return 'Já existe um caso com a mesma turma, semana e problema. O registro existente será carregado para edição.';
-  }
-  if (code === '23503') {
-    return 'A turma selecionada não existe mais no banco de dados. Atualize a página e selecione outra turma.';
-  }
-  if (
-    code === 'PGRST204' ||
-    code === '42703' ||
-    lower.includes('schema cache') ||
-    lower.includes('column') && lower.includes('does not exist')
-  ) {
-    return 'A estrutura de casos APG do Supabase está desatualizada. Execute a migração update_casos_apg_v5.sql.';
-  }
-  if (code === '42P10') {
-    return 'O índice de identificação SxxP1/SxxP2 ainda não existe. Execute a migração update_casos_apg_v5.sql.';
-  }
-  if (code === '42501' || lower.includes('row-level security') || lower.includes('permission denied')) {
-    return 'O Supabase bloqueou a gravação por permissão. Execute a migração update_casos_apg_v5.sql e entre novamente.';
+  const lower = message.toLowerCase();
+  if (error?.code === '42501' || lower.includes('row-level security') || lower.includes('permission denied')) {
+    return 'Você não possui autorização para realizar esta operação.';
   }
   if (lower.includes('fetch') || lower.includes('network')) {
     return 'Não foi possível comunicar-se com o banco de dados.';
@@ -44,39 +24,17 @@ export async function saveCaseInSupabase(
   client: SupabaseClient,
   apgCase: APGCase
 ): Promise<ServiceResult<APGCase>> {
-  if (!apgCase.classId || !isValidUuid(apgCase.classId)) {
-    return { success: false, error: 'Selecione uma turma válida para o caso.' };
+  if (!apgCase.soiId || !isValidUuid(apgCase.soiId)) {
+    return { success: false, error: 'Selecione um SOI válido para o caso.' };
   }
-  if (![1, 2].includes(apgCase.problemNumber)) {
+  const problemNumber = apgCase.problemNumber || apgCase.caseNumber || 1;
+  if (![1, 2].includes(problemNumber)) {
     return { success: false, error: 'O problema deve ser P1 ou P2.' };
   }
-  if (!apgCase.title.trim()) {
-    return { success: false, error: 'Informe o título do caso APG.' };
-  }
-  if (apgCase.week < 1 || apgCase.week > 20) {
-    return { success: false, error: 'A semana deve estar entre 1 e 20.' };
-  }
 
-  const { data: authData, error: authError } = await client.auth.getUser();
-  if (authError || !authData.user) {
-    return { success: false, error: 'Sua sessão expirou. Entre novamente antes de cadastrar o caso.' };
-  }
-
-  const { data: selectedClass, error: classError } = await client
-    .from('turmas')
-    .select('id')
-    .eq('id', apgCase.classId)
-    .maybeSingle();
-  if (classError) {
-    return { success: false, error: friendlyError(classError, 'Não foi possível validar a turma selecionada.') };
-  }
-  if (!selectedClass) {
-    return { success: false, error: 'A turma selecionada não está acessível para este usuário.' };
-  }
-
-  const payload = {
-    turma_id: apgCase.classId,
-    numero: apgCase.problemNumber,
+  const payload: any = {
+    soi_id: apgCase.soiId,
+    numero: problemNumber,
     semana: apgCase.week,
     titulo: apgCase.title.trim(),
     tema: apgCase.theme || null,
@@ -89,15 +47,15 @@ export async function saveCaseInSupabase(
     status: apgCase.status,
   };
 
-  try {
-    const query = isValidUuid(apgCase.id)
-      ? client.from('casos_apg').update(payload).eq('id', apgCase.id)
-      : client
-          .from('casos_apg')
-          .upsert(payload, { onConflict: 'turma_id,semana,numero' });
+  if (isValidUuid(apgCase.id)) {
+    payload.id = apgCase.id;
+  }
 
-    const { data, error } = await query
-      .select('id, turma_id, numero, semana, titulo, tema, descricao, objetivos, instrucoes_tutor, data, hora_inicio, sala, status')
+  try {
+    const { data, error } = await client
+      .from('casos_apg')
+      .upsert(payload, { onConflict: 'soi_id,semana,numero' })
+      .select('id, soi_id, turma_id, numero, semana, titulo, tema, descricao, objetivos, instrucoes_tutor, data, hora_inicio, sala, status')
       .single();
 
     if (error || !data) {
@@ -108,7 +66,8 @@ export async function saveCaseInSupabase(
       success: true,
       data: {
         id: data.id,
-        classId: data.turma_id,
+        soiId: data.soi_id,
+        classId: data.turma_id || undefined,
         problemNumber: Number(data.numero) === 2 ? 2 : 1,
         caseNumber: Number(data.numero) === 2 ? 2 : 1,
         week: Number(data.semana),
@@ -134,10 +93,29 @@ export async function deleteCaseInSupabase(
   caseId: string
 ): Promise<ServiceResult> {
   if (!isValidUuid(caseId)) return { success: false, error: 'O caso ainda não foi salvo no banco de dados.' };
-  const { error } = await client.from('casos_apg').delete().eq('id', caseId);
-  return error
-    ? { success: false, error: friendlyError(error, 'Não foi possível excluir o caso.') }
-    : { success: true };
+
+  try {
+    const { data, error } = await client
+      .from('casos_apg')
+      .delete()
+      .eq('id', caseId)
+      .select('id');
+
+    if (error) {
+      return { success: false, error: error.message || 'Erro ao excluir o caso no banco de dados.' };
+    }
+
+    if (!data || data.length === 0) {
+      return {
+        success: false,
+        error: 'O caso não foi excluído. Verifique sua permissão ou se o registro ainda existe.',
+      };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Erro ao excluir o caso APG.' };
+  }
 }
 
 export async function saveEvaluationInSupabase(
