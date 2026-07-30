@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { StatCard } from '../components/common/StatCard';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
+import { SOIFilter } from '../components/common/SOIFilter';
 import {
   AlertTriangle,
   BookOpen,
@@ -45,6 +46,7 @@ export const DashboardPage: React.FC = () => {
     tableAllocations,
     selectedSemester,
     selectedSemesterId,
+    selectedSoiId,
     selectedClass,
     setSelectedClass,
     selectedGroup,
@@ -58,10 +60,20 @@ export const DashboardPage: React.FC = () => {
     dismissNotification,
   } = useApp();
 
-  const studentSummaries = getCalculatedSummaries();
+  const scopedClasses = classes.filter(
+    (item) =>
+      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (selectedSoiId === 'all' || item.soiId === selectedSoiId)
+  );
+  const scopedClassIds = new Set(scopedClasses.map((item) => item.id));
+  const studentSummaries = getCalculatedSummaries().filter((summary) => {
+    const student = students.find((item) => item.id === summary.studentId);
+    return Boolean(student && scopedClassIds.has(student.classId));
+  });
 
   // Filtered cases
   const filteredCases = cases.filter((c) => {
+    if (selectedSoiId !== 'all' && c.soiId !== selectedSoiId) return false;
     if (selectedUnit !== 'all' && c.unit.toString() !== selectedUnit) return false;
     if (selectedWeek !== 'all' && c.week.toString() !== selectedWeek) return false;
     return true;
@@ -69,6 +81,7 @@ export const DashboardPage: React.FC = () => {
 
   // Filtered evaluations
   const filteredEvaluations = evaluations.filter((e) => {
+    if (!scopedClassIds.has(e.classId)) return false;
     if (selectedClass !== 'all' && e.classId !== selectedClass) return false;
     if (selectedGroup !== 'all' && e.groupId !== selectedGroup) return false;
     if (selectedUnit !== 'all' && e.unit.toString() !== selectedUnit) return false;
@@ -98,7 +111,7 @@ export const DashboardPage: React.FC = () => {
 
   // Calculate aggregates
   const totalStudents = studentSummaries.length;
-  const casesCompleted = cases.filter((c) => c.status === 'realizado').length;
+  const casesCompleted = filteredCases.filter((c) => c.status === 'realizado').length;
   const evalsCompleted = filteredEvaluations.filter((e) => e.status === 'Concluído').length;
   const evalsPending = filteredEvaluations.filter((e) => e.status === 'Pendente').length;
 
@@ -174,7 +187,7 @@ export const DashboardPage: React.FC = () => {
   });
 
   // Upcoming cases
-  const upcomingCases = cases.filter((c) => c.status === 'planejado').slice(0, 4);
+  const upcomingCases = filteredCases.filter((c) => c.status === 'planejado').slice(0, 4);
 
   return (
     <div className="space-y-6">
@@ -192,6 +205,7 @@ export const DashboardPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           {/* Filters dropdown container */}
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <SOIFilter compact />
             {/* 1. Turma Filter */}
             <div>
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
@@ -203,7 +217,7 @@ export const DashboardPage: React.FC = () => {
                 className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
                 <option value="all">Todas as Turmas</option>
-                {classes.filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId).map((c) => (
+                {scopedClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
