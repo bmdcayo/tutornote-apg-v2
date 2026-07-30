@@ -52,7 +52,6 @@ import {
   deleteCaseInSupabase,
   loadSettingsFromSupabase,
   saveCaseInSupabase,
-  saveEvaluationInSupabase,
   saveSettingsInSupabase,
 } from '../services/academicService';
 
@@ -119,27 +118,55 @@ interface AppContextType {
   setGlobalSearch: (term: string) => void;
 
   // Actions
-  saveEvaluation: (evaluation: Evaluation) => Promise<{ success: boolean; error?: string }>;
+  saveEvaluation: (evaluation: Evaluation) => void;
   getStudentCalculatedSummary: (studentId: string) => StudentCalculatedSummary | null;
   getCalculatedSummaries: () => StudentCalculatedSummary[];
   addStudent: (student: Omit<Student, 'id'>, unit1GroupId?: string, unit2GroupId?: string) => void;
   updateStudent: (student: Student, unit1GroupId?: string, unit2GroupId?: string) => void;
   deleteStudent: (studentId: string) => void;
-  importStudents: (newStudents: Omit<Student, 'id'>[]) => void;
+  importStudents: (newStudents: Omit<Student, 'id'>[]) => Promise<{
+    success: boolean;
+    importedCount: number;
+    failedCount: number;
+    errors: Array<{ enrollment: string; error: string }>;
+    error?: string;
+  }>;
   saveAPGCase: (apgCase: APGCase) => Promise<{ success: boolean; error?: string }>;
   deleteAPGCase: (caseId: string) => Promise<{ success: boolean; error?: string }>;
   saveClass: (cls: Class) => void;
   saveGroup: (grp: ClassGroup) => void;
-  updateSettings: (newSettings: AppSettings) => Promise<{ success: boolean; error?: string }>;
+  updateSettings: (newSettings: AppSettings) => void;
+  updateBaremaSettings: (
+    maxBaremaScore: number,
+    baremaCriteria: AppSettings['baremaCriteria']
+  ) => Promise<{ success: boolean; error?: string }>;
   generateGeminiFeedback: (evaluation: Evaluation, student: Student, apgCase?: APGCase) => Promise<string>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const mapSupabaseCase = (row: any): APGCase => ({
+  id: row.id,
+  classId: row.turma_id || '',
+  problemNumber: Number(row.numero) === 2 ? 2 : 1,
+  caseNumber: Number(row.numero) === 2 ? 2 : 1,
+  week: Number(row.semana || 1),
+  unit: Number(row.semana || 1) <= 8 ? 1 : 2,
+  title: row.titulo || '',
+  theme: row.tema || '',
+  date: row.data || '',
+  time: row.hora_inicio || '',
+  room: row.sala || '',
+  description: row.descricao || '',
+  learningObjectives: Array.isArray(row.objetivos) ? row.objetivos : [],
+  teacherInstructions: row.instrucoes_tutor || '',
+  status: (row.status || 'planejado') as APGCase['status'],
+});
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const isDev = Boolean(import.meta.env.DEV || import.meta.env.MODE === 'development');
   const envDemoConfig = import.meta.env.VITE_ENABLE_DEMO_MODE === 'true';
-  const isDemoMode = isDev && envDemoConfig;
+  const isDemoMode = envDemoConfig || !isSupabaseEnvConfigured();
 
   const { user, profile } = useAuth();
 
@@ -263,44 +290,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         );
 
         // 4. Casos APG
-        const { data: csData } = await client.from('casos_apg').select('*');
-        if (csData && csData.length > 0) {
-          setCases(
-            csData.map((c: any) => ({
-              id: c.id,
-              classId: c.turma_id || '',
-              problemNumber: Number(c.numero) === 2 ? 2 : 1,
-              caseNumber: Number(c.numero) === 2 ? 2 : 1,
-              week: c.semana || 1,
-              unit: c.semana <= 8 ? 1 : 2,
-              title: c.titulo || c.title,
-              theme: c.tema || c.theme || '',
-              date: c.data || '',
-              time: c.hora_inicio || '',
-              room: c.sala || '',
-              description: c.descricao || '',
-              learningObjectives: Array.isArray(c.objetivos) ? c.objetivos : [],
-              teacherInstructions: c.instrucoes_tutor || '',
-              status: c.status || 'planejado',
-            }))
-          );
+        const { data: csData, error: casesError } = await client
+          .from('casos_apg')
+          .select('*')
+          .order('semana', { ascending: true })
+          .order('numero', { ascending: true });
+        if (casesError) {
+          console.error('[Supabase Fetch Casos APG Error]', casesError);
+        } else {
+          setCases((csData || []).map(mapSupabaseCase));
         }
+
+        setSettings(await loadSettingsFromSupabase(client, initialSettings));
 
         // 5. Avaliações
         const { data: evData } = await client.from('avaliacoes').select('*');
         if (evData && evData.length > 0) {
-          const mappedEvaluations: Evaluation[] = evData.map((e: any) => {
-              const evalUnit = Number(e.unidade || (Number(e.semana) > 8 ? 2 : 1)) as 1 | 2;
-              const studentAllocation = allAlocations.find(
-                (a: any) => a.aluno_id === e.aluno_id && Number(a.unidade) === evalUnit
-              );
+          setEvaluations(
+            evData.map((e: any) => {
+              const studentAllocation = allAlocations.find((a: any) => a.aluno_id === e.aluno_id);
               return {
                 id: e.id,
                 studentId: e.aluno_id,
-                classId: e.turma_id || studentAllocation?.turma_id || '',
-                groupId: e.mesa_id || studentAllocation?.mesa_id || '',
+                classId: studentAllocation?.turma_id || '',
+                groupId: studentAllocation?.mesa_id || '',
                 week: e.semana || 1,
-                unit: evalUnit,
+                unit: (e.semana && e.semana > 8 ? 2 : 1) as 1 | 2,
                 caseId: e.caso_id || e.sessao_id || '',
                 date: e.created_at || new Date().toISOString().split('T')[0],
                 role: e.papel_sessao || 'Membro',
@@ -317,25 +332,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 pedagogicalFeedback: e.parecer_ia || '',
                 status: e.status || 'Concluído',
                 updatedAt: e.updated_at || e.created_at || new Date().toISOString().split('T')[0],
-                makeupRequired: Boolean(e.segunda_chamada_necessaria),
-                makeupCompleted: Boolean(e.segunda_chamada_concluida),
-                originalAbsenceDate: e.data_falta_original || undefined,
-                makeupDate: e.data_segunda_chamada || undefined,
               };
-            });
-          setEvaluations(mappedEvaluations);
-          const makeupAlerts = mappedEvaluations
-            .filter((evaluation) => evaluation.makeupRequired && !evaluation.makeupCompleted)
-            .map((evaluation) => {
-              const studentName = validAlunos.find((item: any) => item.id === evaluation.studentId)?.nome || 'Estudante';
-              const caseRow = (csData || []).find((item: any) => item.id === evaluation.caseId);
-              const code = `S${String(evaluation.week).padStart(2, '0')}P${Number(caseRow?.numero) === 2 ? 2 : 1}`;
-              return `Segunda chamada pendente: ${studentName} — ${code} — falta em ${evaluation.originalAbsenceDate || evaluation.date}.`;
-            });
-          setNotifications((previous) => Array.from(new Set([...makeupAlerts, ...previous])));
+            })
+          );
         }
-
-        setSettings(await loadSettingsFromSupabase(client, initialSettings));
 
         // 6. Alocações de Mesas
         setTableAllocations(
@@ -735,7 +735,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return count;
   };
 
-  const saveEvaluation = async (evaluation: Evaluation): Promise<{ success: boolean; error?: string }> => {
+  const saveEvaluation = (evaluation: Evaluation) => {
     const totalScore = calculateEvaluationTotalScore(
       evaluation.criterionScores,
       settings.baremaCriteria
@@ -747,43 +747,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: new Date().toISOString().split('T')[0],
     };
 
-    let persistedEvaluation = updatedEval;
-    const client = getSupabaseClient();
-    if (!isDemoMode) {
-      if (!client || !isSupabaseEnvConfigured()) return { success: false, error: 'Supabase não configurado.' };
-      const result = await saveEvaluationInSupabase(client, updatedEval);
-      if (!result.success || !result.data) return { success: false, error: result.error || 'Não foi possível salvar a avaliação.' };
-      persistedEvaluation = result.data;
-    }
     setEvaluations((prev) => {
       const idx = prev.findIndex((e) => e.id === evaluation.id);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = persistedEvaluation;
+        copy[idx] = updatedEval;
         return copy;
+      } else {
+        return [...prev, updatedEval];
       }
-      const sameCaseIndex = prev.findIndex((e) => e.studentId === persistedEvaluation.studentId && e.caseId === persistedEvaluation.caseId);
-      if (sameCaseIndex >= 0) {
-        const copy = [...prev];
-        copy[sameCaseIndex] = persistedEvaluation;
-        return copy;
-      }
-      return [...prev, persistedEvaluation];
     });
 
-    if (persistedEvaluation.makeupRequired && !persistedEvaluation.makeupCompleted) {
-      const studentName = students.find((s) => s.id === persistedEvaluation.studentId)?.name || 'Estudante';
-      const apgCase = cases.find((c) => c.id === persistedEvaluation.caseId);
-      const code = `S${String(persistedEvaluation.week).padStart(2, '0')}P${apgCase?.problemNumber || apgCase?.caseNumber || 1}`;
-      const message = `Segunda chamada pendente: ${studentName} — ${code} — falta em ${persistedEvaluation.originalAbsenceDate || persistedEvaluation.date}.`;
-      setNotifications((prev) => (prev.includes(message) ? prev : [message, ...prev]));
-    }
-    const savedCase = cases.find((c) => c.id === persistedEvaluation.caseId);
-    if (evaluation.week === 8 && (savedCase?.problemNumber || savedCase?.caseNumber) === 2) {
+    if (evaluation.week === 8) {
       setS08p2ReminderOpen(true);
       addNotification('Composição das mesas da 2ª unidade pendente.');
     }
-    return { success: true };
   };
 
   const getStudentCalculatedSummary = (studentId: string): StudentCalculatedSummary | null => {
@@ -950,77 +928,132 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const importStudents = async (
     newStudentsList: Omit<Student, 'id'>[]
-  ): Promise<{ success: boolean; importedCount?: number; error?: string }> => {
+  ): Promise<{
+    success: boolean;
+    importedCount: number;
+    failedCount: number;
+    errors: Array<{ enrollment: string; error: string }>;
+    error?: string;
+  }> => {
     const client = getSupabaseClient();
     const isConfigured = isSupabaseEnvConfigured();
 
     if (client && isConfigured) {
-      let count = 0;
-      for (const s of newStudentsList) {
-        const res = await createStudentInSupabase(client, {
-          name: s.name,
-          enrollment: s.enrollment,
-          semestreCurso: s.semestreCurso,
-          classId: s.classId,
-          unit1GroupId: s.groupId,
-          unit2GroupId: s.groupId,
+      let importedCount = 0;
+      const errors: Array<{ enrollment: string; error: string }> = [];
+
+      for (const student of newStudentsList) {
+        const result = await createStudentInSupabase(client, {
+          name: student.name,
+          enrollment: student.enrollment,
+          semestreCurso: student.semestreCurso,
+          classId: student.classId,
+          unit1GroupId: student.groupId,
+          unit2GroupId: student.unit2GroupId || student.groupId,
         });
-        if (res.success) count++;
-      }
-      await refreshStudents();
-      return { success: true, importedCount: count };
-    } else {
-      const formatted = newStudentsList.map((s, idx) => {
-        const id = `std_imp_${Date.now()}_${idx}`;
-        if (s.groupId) {
-          saveTableAllocation(id, s.classId, s.groupId, 1);
-          saveTableAllocation(id, s.classId, s.groupId, 2);
+        if (result.success) {
+          importedCount += 1;
+        } else {
+          errors.push({
+            enrollment: student.enrollment,
+            error: result.error || 'Falha não identificada ao cadastrar o estudante.',
+          });
         }
-        return {
-          ...s,
-          id,
-        };
-      });
-      setStudents((prev) => [...prev, ...formatted]);
-      return { success: true, importedCount: formatted.length };
+      }
+
+      await refreshStudents();
+      return {
+        success: errors.length === 0,
+        importedCount,
+        failedCount: errors.length,
+        errors,
+        error:
+          errors.length > 0
+            ? `${errors.length} estudante(s) não puderam ser importados.`
+            : undefined,
+      };
     }
+
+    const formatted = newStudentsList.map((student, index) => {
+      const id = `std_imp_${Date.now()}_${index}`;
+      if (student.groupId) {
+        saveTableAllocation(id, student.classId, student.groupId, 1);
+        saveTableAllocation(id, student.classId, student.unit2GroupId || student.groupId, 2);
+      }
+      return { ...student, id };
+    });
+    setStudents((previous) => [...previous, ...formatted]);
+    return {
+      success: true,
+      importedCount: formatted.length,
+      failedCount: 0,
+      errors: [],
+    };
   };
 
-  const saveAPGCase = async (apgCase: APGCase): Promise<{ success: boolean; error?: string }> => {
-    const computedUnit: 1 | 2 = apgCase.week <= 8 ? 1 : 2;
+  const saveAPGCase = async (
+    apgCase: APGCase
+  ): Promise<{ success: boolean; error?: string }> => {
     const finalCase: APGCase = {
       ...apgCase,
-      unit: computedUnit,
+      unit: apgCase.week <= 8 ? 1 : 2,
+      caseNumber: apgCase.problemNumber,
     };
-
-    let persistedCase = finalCase;
     const client = getSupabaseClient();
-    if (!isDemoMode) {
-      if (!client || !isSupabaseEnvConfigured()) return { success: false, error: 'Supabase não configurado.' };
+    if (client && isSupabaseEnvConfigured()) {
       const result = await saveCaseInSupabase(client, finalCase);
-      if (!result.success || !result.data) return { success: false, error: result.error || 'Não foi possível salvar o caso.' };
-      persistedCase = result.data;
-    }
-    setCases((prev) => {
-      const idx = prev.findIndex((c) => c.id === apgCase.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = persistedCase;
-        return copy;
+      if (!result.success || !result.data) {
+        return { success: false, error: result.error || 'Não foi possível salvar o caso APG.' };
       }
-      return [...prev, isDemoMode ? { ...persistedCase, id: `case_${Date.now()}` } : persistedCase];
+
+      // Recarrega a fonte oficial após o INSERT/UPDATE. Isso impede que uma
+      // sincronização inicial atrasada apague visualmente o caso recém-criado.
+      const { data: refreshedCases, error: refreshError } = await client
+        .from('casos_apg')
+        .select('*')
+        .order('semana', { ascending: true })
+        .order('numero', { ascending: true });
+
+      if (!refreshError && refreshedCases) {
+        setCases(refreshedCases.map(mapSupabaseCase));
+      } else {
+        setCases((previous) => {
+          const index = previous.findIndex((item) => item.id === result.data!.id);
+          if (index < 0) return [...previous, result.data!];
+          const copy = [...previous];
+          copy[index] = result.data!;
+          return copy;
+        });
+      }
+
+      handleSetSelectedClass(result.data.classId);
+      handleSetSelectedUnit(String(result.data.unit));
+      setSelectedGroup('all');
+      return { success: true };
+    }
+
+    setCases((previous) => {
+      const index = previous.findIndex((item) => item.id === apgCase.id);
+      if (index < 0) return [...previous, finalCase];
+      const copy = [...previous];
+      copy[index] = finalCase;
+      return copy;
     });
+    handleSetSelectedClass(finalCase.classId);
+    handleSetSelectedUnit(String(finalCase.unit));
+    setSelectedGroup('all');
     return { success: true };
   };
 
-  const deleteAPGCase = async (caseId: string): Promise<{ success: boolean; error?: string }> => {
+  const deleteAPGCase = async (
+    caseId: string
+  ): Promise<{ success: boolean; error?: string }> => {
     const client = getSupabaseClient();
-    if (!isDemoMode) {
-      if (!client || !isSupabaseEnvConfigured()) return { success: false, error: 'Supabase não configurado.' };
+    if (client && isSupabaseEnvConfigured()) {
       const result = await deleteCaseInSupabase(client, caseId);
-      if (!result.success) return result;
+      if (!result.success) return { success: false, error: result.error };
     }
-    setCases((prev) => prev.filter((c) => c.id !== caseId));
+    setCases((prev) => prev.filter((item) => item.id !== caseId));
     return { success: true };
   };
 
@@ -1045,14 +1078,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const updateSettings = async (newSettings: AppSettings): Promise<{ success: boolean; error?: string }> => {
-    const client = getSupabaseClient();
-    if (!isDemoMode) {
-      if (!client || !isSupabaseEnvConfigured()) return { success: false, error: 'Supabase não configurado.' };
-      const result = await saveSettingsInSupabase(client, newSettings);
-      if (!result.success) return result;
-    }
+  const updateSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
+  };
+
+  const updateBaremaSettings = async (
+    maxBaremaScore: number,
+    baremaCriteria: AppSettings['baremaCriteria']
+  ): Promise<{ success: boolean; error?: string }> => {
+    const nextSettings: AppSettings = { ...settings, maxBaremaScore, baremaCriteria };
+    const client = getSupabaseClient();
+    if (client && isSupabaseEnvConfigured()) {
+      const result = await saveSettingsInSupabase(client, nextSettings);
+      if (!result.success) return { success: false, error: result.error };
+    }
+    setSettings(nextSettings);
     return { success: true };
   };
 
@@ -1353,6 +1393,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveClass,
         saveGroup,
         updateSettings,
+        updateBaremaSettings,
         generateGeminiFeedback,
       }}
     >
