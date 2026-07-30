@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { AttendanceStatus, Evaluation, SessionRole } from '../types';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
+import { SOIFilter } from '../components/common/SOIFilter';
 import {
   BookOpen,
   Calendar,
@@ -31,6 +32,7 @@ export const EvaluationsPage: React.FC = () => {
     students,
     evaluations,
     selectedSemesterId,
+    selectedSoiId,
     selectedClass,
     setSelectedClass,
     selectedGroup,
@@ -49,8 +51,16 @@ export const EvaluationsPage: React.FC = () => {
   // Selected session parameters
   const activeWeekNum = selectedWeek !== 'all' ? parseInt(selectedWeek) : 1;
   const currentUnitNum: 1 | 2 = activeWeekNum <= 8 ? 1 : 2;
-  const activeClassId = selectedClass !== 'all' ? selectedClass : classes[0]?.id || '';
-  const availableCases = cases.filter((c) => c.week === activeWeekNum && (!c.classId || c.classId === activeClassId));
+  const scopedClasses = classes.filter(
+    (item) =>
+      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (selectedSoiId === 'all' || item.soiId === selectedSoiId)
+  );
+  const activeClassId = selectedClass !== 'all' && scopedClasses.some((item) => item.id === selectedClass)
+    ? selectedClass
+    : scopedClasses[0]?.id || '';
+  const activeSoiId = classes.find((item) => item.id === activeClassId)?.soiId || '';
+  const availableCases = cases.filter((c) => c.week === activeWeekNum && c.soiId === activeSoiId);
   const [selectedCaseId, setSelectedCaseId] = useState('');
   const currentCase = availableCases.find((c) => c.id === selectedCaseId) || availableCases[0];
   useEffect(() => {
@@ -259,6 +269,7 @@ export const EvaluationsPage: React.FC = () => {
           </button>
 
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+            <SOIFilter compact />
             {/* 1. Semana Selector */}
             <div>
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
@@ -306,7 +317,7 @@ export const EvaluationsPage: React.FC = () => {
                 onChange={(e) => setSelectedClass(e.target.value)}
                 className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                {classes.filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId).map((c) => (
+                {scopedClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
