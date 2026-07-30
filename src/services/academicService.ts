@@ -10,9 +10,29 @@ type ServiceResult<T = undefined> = {
 
 const friendlyError = (error: any, fallback: string): string => {
   const message = String(error?.message || '');
-  const lower = message.toLowerCase();
-  if (error?.code === '42501' || lower.includes('row-level security') || lower.includes('permission denied')) {
-    return 'Você não possui autorização para realizar esta operação.';
+  const details = String(error?.details || '');
+  const lower = `${message} ${details}`.toLowerCase();
+  const code = String(error?.code || '');
+
+  if (code === '23505') {
+    return 'Já existe um caso com a mesma turma, semana e problema. O registro existente será carregado para edição.';
+  }
+  if (code === '23503') {
+    return 'A turma selecionada não existe mais no banco de dados. Atualize a página e selecione outra turma.';
+  }
+  if (
+    code === 'PGRST204' ||
+    code === '42703' ||
+    lower.includes('schema cache') ||
+    lower.includes('column') && lower.includes('does not exist')
+  ) {
+    return 'A estrutura de casos APG do Supabase está desatualizada. Execute a migração update_casos_apg_v5.sql.';
+  }
+  if (code === '42P10') {
+    return 'O índice de identificação SxxP1/SxxP2 ainda não existe. Execute a migração update_casos_apg_v5.sql.';
+  }
+  if (code === '42501' || lower.includes('row-level security') || lower.includes('permission denied')) {
+    return 'O Supabase bloqueou a gravação por permissão. Execute a migração update_casos_apg_v5.sql e entre novamente.';
   }
   if (lower.includes('fetch') || lower.includes('network')) {
     return 'Não foi possível comunicar-se com o banco de dados.';
@@ -29,6 +49,29 @@ export async function saveCaseInSupabase(
   }
   if (![1, 2].includes(apgCase.problemNumber)) {
     return { success: false, error: 'O problema deve ser P1 ou P2.' };
+  }
+  if (!apgCase.title.trim()) {
+    return { success: false, error: 'Informe o título do caso APG.' };
+  }
+  if (apgCase.week < 1 || apgCase.week > 20) {
+    return { success: false, error: 'A semana deve estar entre 1 e 20.' };
+  }
+
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError || !authData.user) {
+    return { success: false, error: 'Sua sessão expirou. Entre novamente antes de cadastrar o caso.' };
+  }
+
+  const { data: selectedClass, error: classError } = await client
+    .from('turmas')
+    .select('id')
+    .eq('id', apgCase.classId)
+    .maybeSingle();
+  if (classError) {
+    return { success: false, error: friendlyError(classError, 'Não foi possível validar a turma selecionada.') };
+  }
+  if (!selectedClass) {
+    return { success: false, error: 'A turma selecionada não está acessível para este usuário.' };
   }
 
   const payload = {
@@ -49,7 +92,9 @@ export async function saveCaseInSupabase(
   try {
     const query = isValidUuid(apgCase.id)
       ? client.from('casos_apg').update(payload).eq('id', apgCase.id)
-      : client.from('casos_apg').insert(payload);
+      : client
+          .from('casos_apg')
+          .upsert(payload, { onConflict: 'turma_id,semana,numero' });
 
     const { data, error } = await query
       .select('id, turma_id, numero, semana, titulo, tema, descricao, objetivos, instrucoes_tutor, data, hora_inicio, sala, status')
