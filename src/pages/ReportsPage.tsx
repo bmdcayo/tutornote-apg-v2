@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
+import { SOIFilter } from '../components/common/SOIFilter';
 import {
   AlertTriangle,
   Calendar,
@@ -27,6 +28,7 @@ export const ReportsPage: React.FC = () => {
     cases,
     settings,
     selectedSemesterId,
+    selectedSoiId,
     selectedClass,
     setSelectedClass,
     selectedGroup,
@@ -55,7 +57,16 @@ export const ReportsPage: React.FC = () => {
     }
   };
 
-  const studentSummaries = getCalculatedSummaries();
+  const scopedClasses = classes.filter(
+    (item) =>
+      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (selectedSoiId === 'all' || item.soiId === selectedSoiId)
+  );
+  const scopedClassIds = new Set(scopedClasses.map((item) => item.id));
+  const studentSummaries = getCalculatedSummaries().filter((summary) => {
+    const student = students.find((item) => item.id === summary.studentId);
+    return Boolean(student && scopedClassIds.has(student.classId));
+  });
 
   // Helper to format filenames with mandatory components:
   // relatorio_<turma>_<unidade>[_<mesa>].<ext>
@@ -836,7 +847,7 @@ export const ReportsPage: React.FC = () => {
         return;
       }
 
-      studentSummaries.forEach((summary, idx) => {
+      filteredSummaries.forEach((summary, idx) => {
         generateSingleStudentPDF(doc, summary, idx === 0);
       });
 
@@ -943,6 +954,7 @@ export const ReportsPage: React.FC = () => {
 
         {/* Global Filters: Order: 1. Tipo de Relatório (tabs above) -> 2. Turma -> 3. Unidade -> 4. Mesa -> 5. Estudante */}
         <div className="flex flex-wrap items-center gap-4">
+          <SOIFilter />
           {/* 2. Turma Filter */}
           <div className="min-w-[180px]">
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -955,7 +967,7 @@ export const ReportsPage: React.FC = () => {
                 className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 px-3 pr-8 text-xs font-semibold text-slate-800 shadow-xs focus:border-blue-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
               >
                 <option value="all">Todas as Turmas</option>
-                {classes.filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId).map((c) => (
+                {scopedClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
