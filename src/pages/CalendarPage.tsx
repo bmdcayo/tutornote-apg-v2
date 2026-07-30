@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
+import { SOIFilter } from '../components/common/SOIFilter';
 import { BookOpen, Calendar as CalendarIcon, Clock, MapPin } from 'lucide-react';
 
 export const CalendarPage: React.FC = () => {
@@ -9,6 +10,7 @@ export const CalendarPage: React.FC = () => {
     cases,
     classes,
     selectedSemesterId,
+    selectedSoiId,
     selectedClass,
     setSelectedClass,
     selectedGroup,
@@ -16,6 +18,15 @@ export const CalendarPage: React.FC = () => {
     selectedUnit,
     setSelectedUnit,
   } = useApp();
+
+  const scopedClasses = classes.filter(
+    (item) =>
+      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (selectedSoiId === 'all' || item.soiId === selectedSoiId)
+  );
+  const scopedCases = cases.filter(
+    (item) => selectedSoiId === 'all' || item.soiId === selectedSoiId
+  );
 
   return (
     <div className="space-y-6">
@@ -31,6 +42,7 @@ export const CalendarPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <SOIFilter compact />
           <div>
             <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
               Turma
@@ -41,7 +53,7 @@ export const CalendarPage: React.FC = () => {
               className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <option value="all">Todas as Turmas</option>
-              {classes.filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId).map((c) => (
+              {scopedClasses.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -62,7 +74,7 @@ export const CalendarPage: React.FC = () => {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 20 }, (_, i) => {
           const weekNum = i + 1;
-          const apgCase = cases.find((c) => c.week === weekNum);
+          const apgCase = scopedCases.find((c) => c.week === weekNum);
           const isUnit1 = weekNum <= 8;
 
           if (selectedUnit === '1' && !isUnit1) return null;
