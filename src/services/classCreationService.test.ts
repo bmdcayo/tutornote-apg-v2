@@ -26,6 +26,7 @@ export async function runClassAndTableTests() {
   const mockUserId = 'usr_prof_12345';
   const mockTurmaId = 'turma_uuid_9999';
   const mockSemesterId = 'sem_uuid_2026';
+  const mockSoiId = 'soi_uuid_2';
 
   // Teste 1: A turma é realmente inserida em public.turmas
   console.log('--- Teste 1: Registro inserido em public.turmas ---');
@@ -109,6 +110,7 @@ export async function runClassAndTableTests() {
     name: 'Medicina 2026.1 - APG I',
     yearSemester: '2026.1',
     semesterId: mockSemesterId,
+    soiId: mockSoiId,
     responsibleTeacher: 'Prof. Teste',
     userId: mockUserId,
   });
@@ -178,6 +180,7 @@ export async function runClassAndTableTests() {
     name: 'Turma Invalida',
     yearSemester: '2026.1',
     semesterId: mockSemesterId,
+    soiId: mockSoiId,
     userId: mockUserId,
   });
 
