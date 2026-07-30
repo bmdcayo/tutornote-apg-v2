@@ -36,7 +36,7 @@ interface ImportStudentsModalProps {
 }
 
 export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen, onClose }) => {
-  const { students, classes, groups, selectedSemesterId, importStudents } = useApp();
+  const { students, classes, groups, selectedSemesterId, selectedSoiId, importStudents } = useApp();
 
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [fileName, setFileName] = useState<string>('');
@@ -546,7 +546,11 @@ export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen
                               className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                             >
                               {classes
-                                .filter((c) => !selectedSemesterId || c.semesterId === selectedSemesterId || c.id === row.classId)
+                                .filter((c) =>
+                                  ((!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+                                    (selectedSoiId === 'all' || c.soiId === selectedSoiId)) ||
+                                  c.id === row.classId
+                                )
                                 .map((c) => (
                                   <option key={c.id} value={c.id}>
                                     {c.name}
