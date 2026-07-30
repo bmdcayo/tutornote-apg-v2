@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Class, ClassGroup, Student } from '../types';
 import { Badge } from '../components/common/Badge';
 import { ProgressBar } from '../components/common/ProgressBar';
+import { SOIFilter } from '../components/common/SOIFilter';
 import {
   ActiveSemester,
   ClassLinkedCounts,
@@ -33,14 +34,20 @@ export const ClassesGroupsPage: React.FC = () => {
     students,
     evaluations,
     semesters,
+    sois,
     tableAllocations,
     selectedSemesterId: globalSemesterId,
     selectedSemester: globalSemesterName,
+    selectedSoiId,
+    setSelectedSoiId,
+    createSOI,
+    deleteSOI,
     saveClass,
     saveGroup,
     importStudents,
     deleteStudent,
     createClassInDatabase,
+    updateClassInDatabase,
     retryFetchMesasForTurma,
     deleteClassInDatabase,
     isCreatingClass,
@@ -49,13 +56,18 @@ export const ClassesGroupsPage: React.FC = () => {
   } = useApp();
 
   const { profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'turmas' | 'grupos' | 'importar'>('turmas');
+  const [activeTab, setActiveTab] = useState<'sois' | 'turmas' | 'grupos' | 'importar'>('sois');
+  const [showSOIModal, setShowSOIModal] = useState(false);
+  const [soiName, setSoiName] = useState('');
+  const [soiError, setSoiError] = useState<string | null>(null);
+  const [isSavingSOI, setIsSavingSOI] = useState(false);
 
   // New Class Form State
   const [showClassModal, setShowClassModal] = useState(false);
   const [className, setClassName] = useState('');
   const [classSemester, setClassSemester] = useState('');
   const [modalSelectedSemesterId, setModalSelectedSemesterId] = useState('');
+  const [modalSelectedSoiId, setModalSelectedSoiId] = useState('');
   const [activeSemestres, setActiveSemestres] = useState<ActiveSemester[]>([]);
   const [isLoadingSemestres, setIsLoadingSemestres] = useState(false);
   const [classTeacher, setClassTeacher] = useState(profile?.nome || '');
@@ -63,12 +75,39 @@ export const ClassesGroupsPage: React.FC = () => {
   const [isSubmittingClass, setIsSubmittingClass] = useState(false);
 
   // Filter classes by global selected semester
-  const filteredClasses = classes.filter((cls) => {
-    if (!globalSemesterId && !globalSemesterName) return true;
-    if (globalSemesterId && cls.semesterId === globalSemesterId) return true;
-    if (globalSemesterName && cls.yearSemester === globalSemesterName) return true;
-    return false;
-  });
+  const filteredClasses = classes
+    .filter((cls) => {
+      if (!globalSemesterId && !globalSemesterName) return true;
+      if (globalSemesterId && cls.semesterId === globalSemesterId) return true;
+      if (globalSemesterName && cls.yearSemester === globalSemesterName) return true;
+      return false;
+    })
+    .filter((cls) => selectedSoiId === 'all' || cls.soiId === selectedSoiId);
+
+  const semesterSOIs = sois.filter((soi) => !globalSemesterId || soi.semesterId === globalSemesterId);
+
+  const handleCreateSOI = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!globalSemesterId || !soiName.trim()) return;
+    setIsSavingSOI(true);
+    setSoiError(null);
+    const result = await createSOI(globalSemesterId, soiName);
+    setIsSavingSOI(false);
+    if (!result.success) {
+      setSoiError(result.error || 'Não foi possível cadastrar o SOI.');
+      return;
+    }
+    setSoiName('');
+    setShowSOIModal(false);
+  };
+
+  const handleDeleteSOI = async (soiId: string, name: string) => {
+    if (!window.confirm(`Excluir o ${name}? Esta ação só é permitida quando não existem turmas vinculadas.`)) return;
+    const result = await deleteSOI(soiId);
+    if (!result.success) {
+      setSoiError(result.error || 'Não foi possível excluir o SOI.');
+    }
+  };
 
   // Retrying mesas loading state
   const [retryingTurmaId, setRetryingTurmaId] = useState<string | null>(null);
@@ -144,6 +183,13 @@ export const ClassesGroupsPage: React.FC = () => {
     clearClassError();
     setClassName('');
     setClassTeacher(profile?.nome || '');
+    const targetSemesterId = globalSemesterId || modalSelectedSemesterId;
+    const availableSOIs = sois.filter((soi) => soi.semesterId === targetSemesterId);
+    setModalSelectedSoiId(
+      selectedSoiId !== 'all' && availableSOIs.some((soi) => soi.id === selectedSoiId)
+        ? selectedSoiId
+        : availableSOIs[0]?.id || ''
+    );
     setShowClassModal(true);
     loadActiveSemestresFromSupabase();
   };
@@ -182,6 +228,10 @@ export const ClassesGroupsPage: React.FC = () => {
       );
       return;
     }
+    if (!modalSelectedSoiId) {
+      setModalErrorMessage('Selecione o SOI ao qual esta turma pertence.');
+      return;
+    }
 
     setModalErrorMessage(null);
     clearClassError();
@@ -192,6 +242,7 @@ export const ClassesGroupsPage: React.FC = () => {
         name: className.trim(),
         yearSemester: classSemester || '2026.1',
         semesterId: modalSelectedSemesterId,
+        soiId: modalSelectedSoiId,
         responsibleTeacher: classTeacher || profile?.nome || 'Docente não identificado',
       });
 
@@ -347,6 +398,16 @@ export const ClassesGroupsPage: React.FC = () => {
         {/* Tab Buttons */}
         <div className="flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <button
+            onClick={() => setActiveTab('sois')}
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
+              activeTab === 'sois'
+                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
+            }`}
+          >
+            SOIs
+          </button>
+          <button
             onClick={() => setActiveTab('turmas')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
               activeTab === 'turmas'
@@ -377,6 +438,15 @@ export const ClassesGroupsPage: React.FC = () => {
             Importar Alunos
           </button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <SOIFilter />
+        {selectedSoiId !== 'all' && (
+          <span className="pb-2 text-xs text-slate-500">
+            Exibindo somente turmas e mesas do SOI selecionado.
+          </span>
+        )}
       </div>
 
       {/* Global Notice Alert for Delete or Pending Tables */}
@@ -412,7 +482,80 @@ export const ClassesGroupsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 1: Turmas */}
+      {/* Tab 1: SOIs */}
+      {activeTab === 'sois' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Cada SOI reúne uma ou mais turmas e compartilha o mesmo conjunto de casos APG.
+            </p>
+            <button
+              onClick={() => {
+                setSoiError(null);
+                setShowSOIModal(true);
+              }}
+              disabled={!globalSemesterId}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" />
+              Cadastrar SOI
+            </button>
+          </div>
+
+          {soiError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
+              {soiError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {semesterSOIs.map((soi) => {
+              const soiClasses = classes.filter((item) => item.soiId === soi.id);
+              const soiClassIds = new Set(soiClasses.map((item) => item.id));
+              const soiStudents = new Set(
+                tableAllocations
+                  .filter((allocation) => soiClassIds.has(allocation.classId))
+                  .map((allocation) => allocation.studentId)
+              ).size;
+              return (
+                <div key={soi.id} className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-500">Componente curricular</span>
+                      <h3 className="mt-1 text-lg font-black text-slate-900 dark:text-white">{soi.name}</h3>
+                      <p className="text-xs text-slate-500">{soiClasses.length} turma(s) • {soiStudents} estudante(s)</p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteSOI(soi.id, soi.name)}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
+                      title="Excluir SOI"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedSoiId(soi.id);
+                      setActiveTab('turmas');
+                    }}
+                    className="mt-4 w-full rounded-xl border border-blue-200 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                  >
+                    Ver turmas deste SOI
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {semesterSOIs.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500 dark:border-slate-700">
+              Nenhum SOI foi cadastrado no semestre selecionado.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 2: Turmas */}
       {activeTab === 'turmas' && (
         <div className="space-y-4">
           <div className="flex justify-end">
@@ -470,9 +613,30 @@ export const ClassesGroupsPage: React.FC = () => {
                     <h3 className="text-base font-black text-slate-900 dark:text-white">
                       {cls.name}
                     </h3>
+                    <p className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
+                      {sois.find((soi) => soi.id === cls.soiId)?.name || 'SOI não identificado'}
+                    </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       Docente Responsável: <span className="font-semibold text-slate-700 dark:text-slate-300">{cls.responsibleTeacher}</span>
                     </p>
+                    <label className="mt-3 block text-[10px] font-bold uppercase text-slate-400">SOI da turma</label>
+                    <select
+                      value={cls.soiId || ''}
+                      onChange={async (event) => {
+                        const result = await updateClassInDatabase({ ...cls, soiId: event.target.value });
+                        if (!result.success) {
+                          setRetryNotice(result.error || 'Não foi possível alterar o SOI da turma.');
+                        }
+                      }}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      <option value="">Selecione o SOI</option>
+                      {sois
+                        .filter((soi) => soi.semesterId === cls.semesterId)
+                        .map((soi) => (
+                          <option key={soi.id} value={soi.id}>{soi.name}</option>
+                        ))}
+                    </select>
                   </div>
 
                   {/* Mesas Status Badge */}
@@ -532,7 +696,7 @@ export const ClassesGroupsPage: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            {groups.map((grp) => {
+            {groups.filter((grp) => filteredClasses.some((cls) => cls.id === grp.classId)).map((grp) => {
               const groupStudents = students.filter((s) => s.groupId === grp.id);
               const parentClass = classes.find((c) => c.id === grp.classId);
 
@@ -618,7 +782,7 @@ export const ClassesGroupsPage: React.FC = () => {
                 onChange={(e) => setImportClassId(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                {classes.map((c) => (
+                {filteredClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -635,7 +799,7 @@ export const ClassesGroupsPage: React.FC = () => {
                 onChange={(e) => setImportGroupId(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                {groups.map((g) => (
+                {groups.filter((g) => g.classId === importClassId).map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.name}
                   </option>
@@ -662,6 +826,59 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
             <Upload className="h-4 w-4" />
             <span>Processar e Importar Alunos</span>
           </button>
+        </div>
+      )}
+
+      {showSOIModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={handleCreateSOI}
+            className="w-full max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Cadastrar SOI</h3>
+              <button type="button" onClick={() => setShowSOIModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {soiError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
+                {soiError}
+              </div>
+            )}
+            <div>
+              <label className="mb-1 block text-xs font-bold text-slate-700 dark:text-slate-300">Semestre</label>
+              <input
+                readOnly
+                value={semesters.find((semester) => semester.id === globalSemesterId)?.name || globalSemesterName}
+                className="w-full rounded-xl border border-slate-200 bg-slate-100 p-2.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold text-slate-700 dark:text-slate-300">Nome do SOI</label>
+              <input
+                autoFocus
+                required
+                value={soiName}
+                onChange={(event) => setSoiName(event.target.value)}
+                placeholder="Ex.: SOI II"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setShowSOIModal(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingSOI || !globalSemesterId || !soiName.trim()}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-5 py-2 text-xs font-bold text-white disabled:opacity-50"
+              >
+                {isSavingSOI && <Loader2 className="h-4 w-4 animate-spin" />}
+                Salvar SOI
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -730,6 +947,8 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
                     if (found) {
                       setClassSemester(found.nome);
                     }
+                    const firstSOI = sois.find((soi) => soi.semesterId === semId);
+                    setModalSelectedSoiId(firstSOI?.id || '');
                   }}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
@@ -739,6 +958,30 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
                     </option>
                   ))}
                 </select>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                SOI
+              </label>
+              <select
+                required
+                value={modalSelectedSoiId}
+                onChange={(event) => setModalSelectedSoiId(event.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <option value="">Selecione o SOI</option>
+                {sois
+                  .filter((soi) => soi.semesterId === modalSelectedSemesterId)
+                  .map((soi) => (
+                    <option key={soi.id} value={soi.id}>{soi.name}</option>
+                  ))}
+              </select>
+              {modalSelectedSemesterId && !sois.some((soi) => soi.semesterId === modalSelectedSemesterId) && (
+                <p className="mt-1 text-[11px] text-amber-600">
+                  Cadastre primeiro um SOI na guia “SOIs”.
+                </p>
               )}
             </div>
 
@@ -774,7 +1017,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
               </button>
               <button
                 type="submit"
-                disabled={isSubmittingClass || isLoadingSemestres || activeSemestres.length === 0 || !modalSelectedSemesterId}
+                disabled={isSubmittingClass || isLoadingSemestres || activeSemestres.length === 0 || !modalSelectedSemesterId || !modalSelectedSoiId}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-5 py-2 text-xs font-bold text-white hover:bg-indigo-900 disabled:opacity-50"
               >
                 {isSubmittingClass ? (
@@ -832,7 +1075,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
                 onChange={(e) => setGroupClassId(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                {classes.map((c) => (
+                {filteredClasses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
