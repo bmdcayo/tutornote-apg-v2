@@ -93,8 +93,18 @@ export interface Class {
   id: string;
   name: string; // e.g. "Turma Med-2026.1 APG"
   semesterId: string;
+  soiId?: string;
   yearSemester: string; // e.g. "2026.1"
   responsibleTeacher: string;
+}
+
+export interface SOI {
+  id: string;
+  semesterId: string;
+  name: string;
+  code: string;
+  active: boolean;
+  createdAt?: string;
 }
 
 export interface Semester {
@@ -107,6 +117,7 @@ export interface Semester {
 
 export interface APGCase {
   id: string;
+  soiId?: string;
   classId?: string;
   problemNumber?: 1 | 2;
   caseNumber: number; // e.g. 1
