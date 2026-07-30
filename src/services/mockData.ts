@@ -5,6 +5,7 @@ import {
   Class,
   ClassGroup,
   Evaluation,
+  SOI,
   Semester,
   Student,
   TableAllocation,
@@ -39,6 +40,7 @@ export const initialBaremaCriteria: BaremaCriterion[] = [
 ];
 
 export const initialSemesters: Semester[] = [];
+export const initialSOIs: SOI[] = [];
 
 export const initialClasses: Class[] = [
   {
