@@ -1,5 +1,10 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { APGCase, AppSettings, Evaluation } from '../types';
+import {
+  APGCase,
+  AppSettings,
+  CaseClassTableAssignment,
+  Evaluation,
+} from '../types';
 import { isValidUuid } from './studentService';
 
 type ServiceResult<T = undefined> = {
@@ -13,6 +18,12 @@ const friendlyError = (error: any, fallback: string): string => {
   const lower = message.toLowerCase();
   if (error?.code === '42501' || lower.includes('row-level security') || lower.includes('permission denied')) {
     return 'Você não possui autorização para realizar esta operação.';
+  }
+  if (
+    error?.code === '42P10'
+    || lower.includes('no unique or exclusion constraint matching the on conflict specification')
+  ) {
+    return 'A estrutura de gravação das avaliações ainda não foi atualizada. Execute a migração de correção do índice de avaliações no Supabase.';
   }
   if (lower.includes('fetch') || lower.includes('network')) {
     return 'Não foi possível comunicar-se com o banco de dados.';
@@ -148,6 +159,7 @@ export async function saveEvaluationInSupabase(
     desempenho: evaluation.criterionScores.crit_3 || 0,
     fechamento: evaluation.criterionScores.crit_4 || 0,
     pontuacoes_criterios: evaluation.criterionScores,
+    itens_rubrica: evaluation.rubricChecks || {},
     nota_bruta: evaluation.totalGrossScore,
     tags: evaluation.performanceTags || [],
     observacao_professor: evaluation.teacherNotes || null,
@@ -173,6 +185,99 @@ export async function saveEvaluationInSupabase(
   } catch (error) {
     return { success: false, error: friendlyError(error, 'Não foi possível salvar a avaliação.') };
   }
+}
+
+export async function loadCaseClassTableAssignment(
+  client: SupabaseClient,
+  classId: string,
+  caseId: string
+): Promise<ServiceResult<CaseClassTableAssignment | null>> {
+  if (!isValidUuid(classId) || !isValidUuid(caseId)) {
+    return { success: true, data: null };
+  }
+
+  const { data, error } = await client
+    .from('aplicacoes_caso_turma')
+    .select('id, caso_id, turma_id, mesa_id, created_at, updated_at')
+    .eq('caso_id', caseId)
+    .eq('turma_id', classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      success: false,
+      error: friendlyError(
+        error,
+        'Não foi possível carregar a mesa definida para este caso.'
+      ),
+    };
+  }
+
+  return {
+    success: true,
+    data: data
+      ? {
+          id: data.id,
+          caseId: data.caso_id,
+          classId: data.turma_id,
+          groupId: data.mesa_id,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        }
+      : null,
+  };
+}
+
+export async function saveCaseClassTableAssignment(
+  client: SupabaseClient,
+  assignment: CaseClassTableAssignment
+): Promise<ServiceResult<CaseClassTableAssignment>> {
+  if (
+    !isValidUuid(assignment.classId) ||
+    !isValidUuid(assignment.caseId) ||
+    !isValidUuid(assignment.groupId)
+  ) {
+    return {
+      success: false,
+      error: 'Selecione um caso, uma turma e uma mesa válidos.',
+    };
+  }
+
+  const { data, error } = await client
+    .from('aplicacoes_caso_turma')
+    .upsert(
+      {
+        caso_id: assignment.caseId,
+        turma_id: assignment.classId,
+        mesa_id: assignment.groupId,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'caso_id,turma_id' }
+    )
+    .select('id, caso_id, turma_id, mesa_id, created_at, updated_at')
+    .single();
+
+  if (error || !data) {
+    return {
+      success: false,
+      error: friendlyError(
+        error,
+        'Não foi possível definir a mesa avaliada para este caso.'
+      ),
+    };
+  }
+
+  return {
+    success: true,
+    data: {
+      id: data.id,
+      caseId: data.caso_id,
+      classId: data.turma_id,
+      groupId: data.mesa_id,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    },
+  };
 }
 
 export interface TableNotebook {

@@ -150,10 +150,10 @@ export const ReportsPage: React.FC = () => {
       'presença',
       'atestado',
       'papel',
-      'abertura',
-      'postura',
-      'desempenho',
-      'fechamento',
+      'abertura de problema',
+      'postura e colaboração',
+      'fechamento de problema',
+      'assiduidade',
       'nota bruta de 20',
       'média semanal',
       'nota da primeira unidade de 20',
@@ -198,8 +198,8 @@ export const ReportsPage: React.FC = () => {
         // Scores for individual criteria
         const critAbertura = evalItem.criterionScores['crit_1'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
         const critPostura = evalItem.criterionScores['crit_2'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
-        const critDesempenho = evalItem.criterionScores['crit_3'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
-        const critFechamento = evalItem.criterionScores['crit_4'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
+        const critFechamento = evalItem.criterionScores['crit_3'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
+        const critAssiduidade = evalItem.criterionScores['crit_4'] ?? null;
 
         const rowData = [
           sum.studentName,
@@ -215,8 +215,8 @@ export const ReportsPage: React.FC = () => {
           evalItem.role,
           critAbertura !== null ? Number(critAbertura.toFixed(2)) : '-',
           critPostura !== null ? Number(critPostura.toFixed(2)) : '-',
-          critDesempenho !== null ? Number(critDesempenho.toFixed(2)) : '-',
           critFechamento !== null ? Number(critFechamento.toFixed(2)) : '-',
+          critAssiduidade !== null ? Number(critAssiduidade.toFixed(2)) : '-',
           Number(evalItem.totalGrossScore.toFixed(2)),
           weeklyAvg !== null ? Number(weeklyAvg.toFixed(2)) : '-',
           Number(sum.unit1Grade.toFixed(2)),
@@ -623,7 +623,7 @@ export const ReportsPage: React.FC = () => {
     // Calculate Average per Criterion (0..5)
     let sumCrit1 = 0, sumCrit2 = 0, sumCrit3 = 0, sumCrit4 = 0, countEval = 0;
     studentEvals.forEach((e) => {
-      if (e.attendance === 'Presente') {
+      if (e.attendance !== 'Atestado' && e.status === 'Concluído') {
         sumCrit1 += e.criterionScores['crit_1'] ?? 0;
         sumCrit2 += e.criterionScores['crit_2'] ?? 0;
         sumCrit3 += e.criterionScores['crit_3'] ?? 0;
@@ -641,7 +641,7 @@ export const ReportsPage: React.FC = () => {
     doc.text('Média por Critério (Escala 0 a 5.0):', 14, y);
     doc.setFont('helvetica', 'normal');
     doc.text(
-      `1. Abertura/Pontualidade: ${avgC1}  |  2. Postura/Grupo: ${avgC2}  |  3. Domínio Técnico: ${avgC3}  |  4. Fechamento: ${avgC4}`,
+      `1. Abertura: ${avgC1}  |  2. Postura/Colaboração: ${avgC2}  |  3. Fechamento: ${avgC3}  |  4. Assiduidade: ${avgC4}`,
       70,
       y
     );

@@ -155,6 +155,7 @@ export interface Evaluation {
   role: SessionRole;
   attendance: AttendanceStatus;
   criterionScores: Record<string, number>; // criterionId -> score (0..5)
+  rubricChecks?: Record<string, boolean>; // rubricItemId -> checked
   totalGrossScore: number; // Max 20.0
   performanceTags: string[];
   teacherNotes: string;
@@ -165,6 +166,15 @@ export interface Evaluation {
   makeupCompleted?: boolean;
   originalAbsenceDate?: string;
   makeupDate?: string;
+}
+
+export interface CaseClassTableAssignment {
+  id?: string;
+  caseId: string;
+  classId: string;
+  groupId: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AppSettings {

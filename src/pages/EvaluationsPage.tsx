@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { AttendanceStatus, Evaluation, SessionRole } from '../types';
 import { Badge } from '../components/common/Badge';
-import { UnitTableFilters } from '../components/common/UnitTableFilters';
 import { SOIFilter } from '../components/common/SOIFilter';
 import {
   BookOpen,
@@ -22,8 +21,15 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getSupabaseClient, isSupabaseEnvConfigured } from '../lib/supabase';
-import { loadTableNotebook, saveTableNotebook, TableNotebook } from '../services/academicService';
+import {
+  loadCaseClassTableAssignment,
+  loadTableNotebook,
+  saveCaseClassTableAssignment,
+  saveTableNotebook,
+  TableNotebook,
+} from '../services/academicService';
 import { caseMatchesSOI } from '../utils/caseCatalog';
+import { clearClosingChecks } from '../services/rubricService';
 
 export const EvaluationsPage: React.FC = () => {
   const {
@@ -70,8 +76,15 @@ export const EvaluationsPage: React.FC = () => {
   );
   const [selectedCaseId, setSelectedCaseId] = useState('');
   const currentCase = availableCases.find((c) => c.id === selectedCaseId) || availableCases[0];
+  const [assignmentError, setAssignmentError] = useState('');
+  const [isAssignmentLoading, setIsAssignmentLoading] = useState(false);
+  const [isAssignmentSaving, setIsAssignmentSaving] = useState(false);
   useEffect(() => {
-    if (availableCases.length && !availableCases.some((c) => c.id === selectedCaseId)) setSelectedCaseId(availableCases[0].id);
+    if (availableCases.length && !availableCases.some((c) => c.id === selectedCaseId)) {
+      setSelectedCaseId(availableCases[0].id);
+    } else if (availableCases.length === 0 && selectedCaseId) {
+      setSelectedCaseId('');
+    }
   }, [activeWeekNum, activeClassId, cases, selectedCaseId]);
 
   // Auto-sync global selectedUnit with activeWeekNum
@@ -93,50 +106,94 @@ export const EvaluationsPage: React.FC = () => {
   const [notebookContributionText, setNotebookContributionText] = useState('');
   const [notebookError, setNotebookError] = useState('');
 
-  // Get active class and group students
-  const activeGroupId = selectedGroup !== 'all' ? selectedGroup : 'all';
+  useEffect(() => {
+    if (currentCase?.date) setSessionDate(currentCase.date);
+  }, [currentCase?.id, currentCase?.date]);
+
+  const classTables = groups.filter((group) => group.classId === activeClassId);
+  const selectedTable = classTables.find((group) => group.id === selectedGroup);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAssignment = async () => {
+      setAssignmentError('');
+      if (!activeClassId || !currentCase?.id) {
+        setSelectedGroup('all');
+        return;
+      }
+
+      const client = getSupabaseClient();
+      if (!client || !isSupabaseEnvConfigured()) {
+        if (!classTables.some((table) => table.id === selectedGroup)) {
+          setSelectedGroup('all');
+        }
+        return;
+      }
+
+      setIsAssignmentLoading(true);
+      const result = await loadCaseClassTableAssignment(
+        client,
+        activeClassId,
+        currentCase.id
+      );
+      if (cancelled) return;
+      setIsAssignmentLoading(false);
+      if (!result.success) {
+        setSelectedGroup('all');
+        setAssignmentError(result.error || 'Não foi possível carregar a mesa do caso.');
+        return;
+      }
+      const savedGroupId = result.data?.groupId || 'all';
+      setSelectedGroup(
+        classTables.some((table) => table.id === savedGroupId)
+          ? savedGroupId
+          : 'all'
+      );
+    };
+    void loadAssignment();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeClassId, currentCase?.id]);
+
+  const handleTableSelection = async (groupId: string) => {
+    setAssignmentError('');
+    if (!currentCase || !activeClassId || groupId === 'all') {
+      setSelectedGroup('all');
+      return;
+    }
+    setSelectedGroup(groupId);
+    const client = getSupabaseClient();
+    if (!client || !isSupabaseEnvConfigured()) return;
+
+    setIsAssignmentSaving(true);
+    const result = await saveCaseClassTableAssignment(client, {
+      caseId: currentCase.id,
+      classId: activeClassId,
+      groupId,
+    });
+    setIsAssignmentSaving(false);
+    if (!result.success) {
+      setSelectedGroup('all');
+      setAssignmentError(result.error || 'Não foi possível salvar a mesa do caso.');
+    }
+  };
 
   const sessionStudents = students.filter((s) => {
     if (s.ativo === false || s.status === 'Inativo') return false;
     if (activeClassId && s.classId !== activeClassId) return false;
-    if (activeGroupId !== 'all') {
-      const alloc = getStudentAllocation(s.id, currentUnitNum);
-      if (!alloc) return false;
-      if (alloc.groupId !== activeGroupId) {
-        const group = groups.find((g) => g.id === alloc.groupId);
-        if (!group) return false;
-        const lowerName = group.name.toLowerCase();
-        if (activeGroupId === 'grp_m1' && !lowerName.includes('mesa 1')) return false;
-        if (activeGroupId === 'grp_m2' && !lowerName.includes('mesa 2')) return false;
-        if (activeGroupId === 'grp_m3' && !lowerName.includes('mesa 3')) return false;
-      }
-    }
-    return true;
+    if (!selectedTable) return false;
+    const allocation = getStudentAllocation(s.id, currentUnitNum);
+    return allocation?.classId === activeClassId && allocation.groupId === selectedTable.id;
   });
 
   // Load table notebook text from storage (isolated by class, unit, table, and week)
   const activeClassName = classes.find((c) => c.id === activeClassId)?.name || 'Medicina 2026.1';
-  const activeTableName =
-    activeGroupId === 'grp_m1'
-      ? 'Mesa 1'
-      : activeGroupId === 'grp_m2'
-      ? 'Mesa 2'
-      : activeGroupId === 'grp_m3'
-      ? 'Mesa 3'
-      : 'Todas as Mesas';
+  const activeTableName = selectedTable?.name || 'Mesa não definida';
   const weekPad = activeWeekNum < 10 ? `0${activeWeekNum}` : `${activeWeekNum}`;
   const problemCode = `S${weekPad}P${currentCase?.problemNumber || currentCase?.caseNumber || 1}`;
 
-  const notebookKey = `notebook_${activeClassId}_u${currentUnitNum}_${activeGroupId}_w${activeWeekNum}`;
-
-  const selectedTable = groups.find((group) => {
-    if (group.classId !== activeClassId) return false;
-    if (group.id === activeGroupId) return true;
-    const name = group.name.toLowerCase();
-    return (activeGroupId === 'grp_m1' && name.includes('mesa 1')) ||
-      (activeGroupId === 'grp_m2' && name.includes('mesa 2')) ||
-      (activeGroupId === 'grp_m3' && name.includes('mesa 3'));
-  });
+  const notebookKey = `notebook_${activeClassId}_u${currentUnitNum}_${selectedGroup}_w${activeWeekNum}`;
   const openNotebook = async () => {
     const client = getSupabaseClient();
     if (client && isSupabaseEnvConfigured() && currentCase && selectedTable) {
@@ -179,7 +236,7 @@ export const EvaluationsPage: React.FC = () => {
       id: `eval_${studentId}_w${activeWeekNum}`,
       studentId,
       classId: student?.classId || activeClassId,
-      groupId: student?.groupId || 'grp_a',
+      groupId: selectedTable?.id || getStudentAllocation(studentId, currentUnitNum)?.groupId || '',
       week: activeWeekNum,
       unit: activeWeekNum <= 8 ? 1 : 2,
       caseId: currentCase?.id || '',
@@ -187,6 +244,7 @@ export const EvaluationsPage: React.FC = () => {
       role: 'Membro',
       attendance: 'Presente',
       criterionScores: { crit_1: 0, crit_2: 0, crit_3: 0, crit_4: 0 },
+      rubricChecks: {},
       totalGrossScore: 0,
       performanceTags: [],
       teacherNotes: '',
@@ -219,37 +277,65 @@ export const EvaluationsPage: React.FC = () => {
     consideredSessions > 0 ? (presentCount / consideredSessions) * 100 : 100;
 
   // Quick Inline Role & Attendance Changer
-  const handleQuickRoleChange = (studentId: string, role: SessionRole) => {
+  const handleQuickRoleChange = async (studentId: string, role: SessionRole) => {
+    setAssignmentError('');
+    if (!currentCase || !selectedTable) {
+      setAssignmentError('Selecione o caso e defina a mesa antes de alterar o papel.');
+      return;
+    }
     const ev = getStudentEvaluation(studentId);
-    void saveEvaluation({ ...ev, role });
+    const result = await saveEvaluation({
+      ...ev,
+      role,
+      caseId: currentCase.id,
+      classId: activeClassId,
+      groupId: selectedTable.id,
+    });
+    if (!result.success) {
+      setAssignmentError(result.error || 'Não foi possível salvar o papel do estudante.');
+    }
   };
 
-  const handleQuickAttendanceChange = (
+  const handleQuickAttendanceChange = async (
     studentId: string,
     attendance: AttendanceStatus
   ) => {
+    setAssignmentError('');
+    if (!currentCase || !selectedTable) {
+      setAssignmentError('Selecione o caso e defina a mesa antes de alterar a presença.');
+      return;
+    }
     const ev = getStudentEvaluation(studentId);
     let updatedStatus = ev.status;
     let scores = { ...ev.criterionScores };
 
     if (attendance === 'Ausente') {
-      // Absent score is 0
-      scores = { crit_1: 0, crit_2: 0, crit_3: 0, crit_4: 0 };
+      // Apenas Fechamento de problema é zerado.
+      scores = { ...scores, crit_3: 0 };
       updatedStatus = 'Pendente';
     } else if (attendance === 'Atestado') {
-      scores = { crit_1: 0, crit_2: 0, crit_3: 0, crit_4: 0 };
-      updatedStatus = 'Concluído';
+      updatedStatus = 'Pendente';
     }
 
-    void saveEvaluation({
+    const result = await saveEvaluation({
       ...ev,
+      caseId: currentCase.id,
+      classId: activeClassId,
+      groupId: selectedTable.id,
       attendance,
       criterionScores: scores,
+      rubricChecks:
+        attendance === 'Ausente'
+          ? clearClosingChecks(ev.rubricChecks || {})
+          : ev.rubricChecks || {},
       status: updatedStatus,
       makeupRequired: attendance === 'Atestado',
       makeupCompleted: attendance === 'Atestado' ? false : ev.makeupCompleted,
       originalAbsenceDate: attendance === 'Atestado' ? sessionDate : ev.originalAbsenceDate,
     });
+    if (!result.success) {
+      setAssignmentError(result.error || 'Não foi possível salvar a presença do estudante.');
+    }
   };
 
   return (
@@ -265,11 +351,12 @@ export const EvaluationsPage: React.FC = () => {
           </p>
         </div>
 
-        {/* Filters in required order: 1. Semana -> 2. Unidade (derived) -> 3. Turma -> 4. Mesa */}
+        {/* Fluxo: SOI -> Turma -> Semana -> Caso -> Unidade -> Mesa */}
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={openNotebook}
-            className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition-colors"
+            disabled={!currentCase || !selectedTable}
+            className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Notebook className="h-4 w-4" />
             <span>Bloco de Notas da Mesa</span>
@@ -277,13 +364,30 @@ export const EvaluationsPage: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-900">
             <SOIFilter compact />
-            {/* 1. Semana Selector */}
+
             <div>
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
-                1. Semana / Caso
+                Turma
               </label>
               <select
-                value={selectedWeek}
+                value={activeClassId}
+                onChange={(e) => setSelectedClass(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                {scopedClasses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
+                Semana
+              </label>
+              <select
+                value={activeWeekNum.toString()}
                 onChange={(e) => setSelectedWeek(e.target.value)}
                 className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
@@ -300,34 +404,38 @@ export const EvaluationsPage: React.FC = () => {
 
             <div>
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">Caso</label>
-              <select value={currentCase?.id || ''} onChange={(event) => setSelectedCaseId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold">
+              <select
+                value={currentCase?.id || ''}
+                onChange={(event) => setSelectedCaseId(event.target.value)}
+                className="min-w-56 rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                {availableCases.length === 0 && <option value="">Nenhum caso nesta semana</option>}
                 {availableCases.map((apgCase) => <option key={apgCase.id} value={apgCase.id}>S{String(apgCase.week).padStart(2, '0')}P{apgCase.problemNumber || apgCase.caseNumber} — {apgCase.title}</option>)}
               </select>
             </div>
 
-            {/* Unidade e Mesa */}
-            <UnitTableFilters
-              selectedUnit={currentUnitNum.toString()}
-              onUnitChange={() => {}} // Unit is derived from week
-              selectedTable={selectedGroup}
-              onTableChange={setSelectedGroup}
-              disableUnitSelect={true}
-            />
-
-            {/* 3. Turma Selector */}
             <div>
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
-                Turma
+                Unidade
+              </label>
+              <div className="rounded-xl border border-slate-200 bg-slate-100 py-1.5 px-3 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                {currentUnitNum === 1 ? '1ª Unidade — Semanas 1 a 8' : '2ª Unidade — Semanas 9 a 20'}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
+                Mesa avaliada
               </label>
               <select
-                value={selectedClass}
-                onChange={(e) => setSelectedClass(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                value={selectedTable?.id || 'all'}
+                disabled={!currentCase || isAssignmentLoading || isAssignmentSaving}
+                onChange={(event) => void handleTableSelection(event.target.value)}
+                className="min-w-36 rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                {scopedClasses.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
+                <option value="all">Selecione a mesa</option>
+                {classTables.map((table) => (
+                  <option key={table.id} value={table.id}>{table.name}</option>
                 ))}
               </select>
             </div>
@@ -349,6 +457,17 @@ export const EvaluationsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {assignmentError && (
+        <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+          {assignmentError}
+        </div>
+      )}
+      {currentCase && !selectedTable && !isAssignmentLoading && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          Defina a única mesa que será avaliada neste caso para a turma selecionada.
+        </div>
+      )}
 
       {/* BLOCO DE NOTAS DA MESA MODAL */}
       {showNotebookModal && (
@@ -518,7 +637,7 @@ export const EvaluationsPage: React.FC = () => {
               <tr>
                 <th className="px-4 py-3">Estudante</th>
                 <th className="px-4 py-3">Matrícula</th>
-                <th className="px-4 py-3">Grupo</th>
+                <th className="px-4 py-3">Mesa</th>
                 <th className="px-4 py-3">Papel na Sessão</th>
                 <th className="px-4 py-3">Presença</th>
                 <th className="px-4 py-3">Status</th>
@@ -548,14 +667,14 @@ export const EvaluationsPage: React.FC = () => {
                       <td className="px-4 py-3 text-slate-500 font-mono">{student.enrollment}</td>
                       <td className="px-4 py-3">
                         <Badge variant="neutral" size="sm">
-                          {groups.find((g) => g.id === student.groupId)?.name || 'Grupo A'}
+                          {selectedTable?.name || 'Mesa não definida'}
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
                         <select
                           value={ev.role}
                           onChange={(e) =>
-                            handleQuickRoleChange(student.id, e.target.value as SessionRole)
+                            void handleQuickRoleChange(student.id, e.target.value as SessionRole)
                           }
                           className="rounded-lg border border-slate-200 bg-white py-1 px-2 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                         >
@@ -568,7 +687,7 @@ export const EvaluationsPage: React.FC = () => {
                         <select
                           value={ev.attendance}
                           onChange={(e) =>
-                            handleQuickAttendanceChange(
+                            void handleQuickAttendanceChange(
                               student.id,
                               e.target.value as AttendanceStatus
                             )
@@ -604,13 +723,13 @@ export const EvaluationsPage: React.FC = () => {
                         {ev.attendance === 'Presente'
                           ? `${ev.totalGrossScore.toFixed(1)} / 20.0`
                           : ev.attendance === 'Ausente'
-                          ? '0.0 / 20.0 (Falta)'
+                          ? `${ev.totalGrossScore.toFixed(1)} / 20.0 (Fechamento zerado)`
                           : ev.makeupCompleted ? '2ª chamada concluída' : 'Pendente de 2ª chamada'}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button
                           onClick={() =>
-                            navigate(`/avaliar/${student.id}/${activeWeekNum}?case=${currentCase?.id || ''}`)
+                            navigate(`/avaliar/${student.id}/${activeWeekNum}?case=${currentCase?.id || ''}&table=${selectedTable?.id || ''}`)
                           }
                           className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-800 transition-colors shadow-xs"
                         >

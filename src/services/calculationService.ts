@@ -54,7 +54,9 @@ export function calculateEvaluationTotalScore(
 
 /**
  * Determines whether an evaluation is valid for average calculation.
- * Presente and Ausente are valid for calculation (Ausente counts as 0).
+ * Presente and Ausente are valid for calculation. In an absence, only the
+ * "Fechamento de problema" category is forced to zero; the remaining
+ * categories keep the score recorded by the professor.
  * Atestado is excluded from denominator and numerator.
  * Pendente/Rascunho is excluded while not finalized.
  */
@@ -68,7 +70,8 @@ export function getEffectiveScoreForEvaluation(evalItem: Evaluation): number | n
   }
 
   if (evalItem.attendance === 'Ausente') {
-    return 0.0; // Score 0 for absence without certificate
+    // The closing category is already forced to zero before persistence.
+    return Math.max(0, Math.min(evalItem.totalGrossScore, 15.0));
   }
 
   // Presente: return calculated total score (clamped 0..20)

@@ -385,6 +385,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   crit_3: Number(e.desempenho || 0),
                   crit_4: Number(e.fechamento || 0),
                 },
+                rubricChecks:
+                  e.itens_rubrica && typeof e.itens_rubrica === 'object'
+                    ? e.itens_rubrica
+                    : {},
                 totalGrossScore: Number(e.nota_bruta || 0),
                 performanceTags: Array.isArray(e.tags) ? e.tags : [],
                 teacherNotes: e.observacao_professor || '',
@@ -826,10 +830,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveEvaluation = async (evaluation: Evaluation): Promise<{ success: boolean; error?: string }> => {
-    const totalScore = calculateEvaluationTotalScore(
-      evaluation.criterionScores,
-      settings.baremaCriteria
-    );
+    const totalScore =
+      evaluation.attendance === 'Atestado' && !evaluation.makeupCompleted
+        ? 0
+        : calculateEvaluationTotalScore(
+            evaluation.criterionScores,
+            settings.baremaCriteria
+          );
 
     const updatedEval: Evaluation = {
       ...evaluation,

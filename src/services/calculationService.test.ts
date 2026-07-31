@@ -105,8 +105,8 @@ export function runCalculationTests() {
   assertLessThanOrEqual(resFinalOver.finalGrade, 35.0, 'Nota final limitada rigidamente a 35.0');
   passedCount++;
 
-  // Teste 9: Ausência sem atestado deve resultar em zero.
-  console.log('\n--- Teste 9: Ausência sem atestado resulta em zero (0.0) ---');
+  // Teste 9: Ausência zera apenas fechamento e preserva os demais critérios.
+  console.log('\n--- Teste 9: Ausência preserva até 15 pontos e zera o fechamento ---');
   const mockAbsentEval: Evaluation = {
     id: 'e_absent',
     studentId: 's1',
@@ -118,8 +118,8 @@ export function runCalculationTests() {
     date: '2026-02-09',
     role: 'Membro',
     attendance: 'Ausente',
-    criterionScores: {},
-    totalGrossScore: 0.0,
+    criterionScores: { crit_1: 5, crit_2: 5, crit_3: 0, crit_4: 5 },
+    totalGrossScore: 15.0,
     performanceTags: [],
     teacherNotes: 'Sem justificativa',
     pedagogicalFeedback: '',
@@ -127,7 +127,7 @@ export function runCalculationTests() {
     updatedAt: '2026-02-09',
   };
   const absentScore = getEffectiveScoreForEvaluation(mockAbsentEval);
-  assertEqual(absentScore ?? -1, 0.0, 'Ausência sem atestado gera nota 0.0');
+  assertEqual(absentScore ?? -1, 15.0, 'Ausência preserva os três critérios editáveis');
   passedCount++;
 
   // Teste 10: Atestado gera pendência de segunda chamada e não recebe nota zero.

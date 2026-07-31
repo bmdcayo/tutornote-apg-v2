@@ -11,33 +11,9 @@ import {
   TableAllocation,
   TableAllocationChangeLog,
 } from '../types';
+import { DEFAULT_RUBRIC_SETTINGS } from './rubricService';
 
-export const initialBaremaCriteria: BaremaCriterion[] = [
-  {
-    id: 'crit_1',
-    name: 'Abertura e integração',
-    maxScore: 5,
-    description: 'Pontualidade, apresentação do caso, empatia e clima grupal acolhedor.',
-  },
-  {
-    id: 'crit_2',
-    name: 'Postura ético-profissional e colaboração',
-    maxScore: 5,
-    description: 'Escuta ativa, respeito às opiniões, divisão justa das tarefas e ética.',
-  },
-  {
-    id: 'crit_3',
-    name: 'Desempenho técnico e acadêmico',
-    maxScore: 5,
-    description: 'Domínio dos objetivos, embasamento fisiopatológico e clareza argumentativa.',
-  },
-  {
-    id: 'crit_4',
-    name: 'Fechamento e síntese',
-    maxScore: 5,
-    description: 'Capacidade de resumo dos aprendizados, autoavaliação e identificação de lacunas.',
-  },
-];
+export const initialBaremaCriteria: BaremaCriterion[] = DEFAULT_RUBRIC_SETTINGS;
 
 export const initialSemesters: Semester[] = [];
 export const initialSOIs: SOI[] = [];
