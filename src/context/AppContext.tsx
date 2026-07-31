@@ -149,6 +149,29 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const mapAPGCaseRow = (row: any): APGCase => ({
+  id: row.id,
+  soiId: row.soi_id || '',
+  semesterId: row.semestre_id || '',
+  soiCode: row.soi_codigo || '',
+  soiName: row.soi_nome || '',
+  createdBy: row.created_by || '',
+  classId: row.turma_id || '',
+  problemNumber: Number(row.numero) === 2 ? 2 : 1,
+  caseNumber: Number(row.numero) === 2 ? 2 : 1,
+  week: Number(row.semana || 1),
+  unit: Number(row.semana) <= 8 ? 1 : 2,
+  title: row.titulo || row.title || '',
+  theme: row.tema || row.theme || '',
+  date: row.data || '',
+  time: row.hora_inicio || '',
+  room: row.sala || '',
+  description: row.descricao || '',
+  learningObjectives: Array.isArray(row.objetivos) ? row.objetivos : [],
+  teacherInstructions: row.instrucoes_tutor || '',
+  status: row.status || 'planejado',
+});
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const envDemoConfig = import.meta.env.VITE_ENABLE_DEMO_MODE;
   const isDemoMode = envDemoConfig === 'true' || envDemoConfig !== 'false' && !isSupabaseEnvConfigured();
@@ -334,26 +357,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .order('semana', { ascending: true })
           .order('numero', { ascending: true });
         if (csData) {
-          setCases(
-            csData.map((c: any) => ({
-              id: c.id,
-              soiId: c.soi_id || '',
-              classId: c.turma_id || '',
-              problemNumber: Number(c.numero) === 2 ? 2 : 1,
-              caseNumber: Number(c.numero) === 2 ? 2 : 1,
-              week: Number(c.semana || 1),
-              unit: Number(c.semana) <= 8 ? 1 : 2,
-              title: c.titulo || c.title || '',
-              theme: c.tema || c.theme || '',
-              date: c.data || '',
-              time: c.hora_inicio || '',
-              room: c.sala || '',
-              description: c.descricao || '',
-              learningObjectives: Array.isArray(c.objetivos) ? c.objetivos : [],
-              teacherInstructions: c.instrucoes_tutor || '',
-              status: c.status || 'planejado',
-            }))
-          );
+          setCases(csData.map(mapAPGCaseRow));
         }
 
         // 5. Avaliações
@@ -1084,26 +1088,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: error.message || 'Erro ao recarregar a lista de casos APG.' };
     }
     if (csData) {
-      setCases(
-        csData.map((c: any) => ({
-          id: c.id,
-          soiId: c.soi_id || '',
-          classId: c.turma_id || '',
-          problemNumber: Number(c.numero) === 2 ? 2 : 1,
-          caseNumber: Number(c.numero) === 2 ? 2 : 1,
-          week: Number(c.semana || 1),
-          unit: Number(c.semana) <= 8 ? 1 : 2,
-          title: c.titulo || c.title || '',
-          theme: c.tema || c.theme || '',
-          date: c.data || '',
-          time: c.hora_inicio || '',
-          room: c.sala || '',
-          description: c.descricao || '',
-          learningObjectives: Array.isArray(c.objetivos) ? c.objetivos : [],
-          teacherInstructions: c.instrucoes_tutor || '',
-          status: c.status || 'planejado',
-        }))
-      );
+      setCases(csData.map(mapAPGCaseRow));
     }
     return { success: true };
   };

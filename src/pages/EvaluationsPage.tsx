@@ -23,11 +23,13 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { getSupabaseClient, isSupabaseEnvConfigured } from '../lib/supabase';
 import { loadTableNotebook, saveTableNotebook, TableNotebook } from '../services/academicService';
+import { caseMatchesSOI } from '../utils/caseCatalog';
 
 export const EvaluationsPage: React.FC = () => {
   const {
     classes,
     groups,
+    sois,
     cases,
     students,
     evaluations,
@@ -60,7 +62,12 @@ export const EvaluationsPage: React.FC = () => {
     ? selectedClass
     : scopedClasses[0]?.id || '';
   const activeSoiId = classes.find((item) => item.id === activeClassId)?.soiId || '';
-  const availableCases = cases.filter((c) => c.week === activeWeekNum && c.soiId === activeSoiId);
+  const availableCases = cases.filter(
+    (c) =>
+      c.week === activeWeekNum &&
+      caseMatchesSOI(c, activeSoiId, sois) &&
+      (!selectedSemesterId || !c.semesterId || c.semesterId === selectedSemesterId)
+  );
   const [selectedCaseId, setSelectedCaseId] = useState('');
   const currentCase = availableCases.find((c) => c.id === selectedCaseId) || availableCases[0];
   useEffect(() => {

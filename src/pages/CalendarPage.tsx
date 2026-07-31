@@ -4,10 +4,12 @@ import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
 import { SOIFilter } from '../components/common/SOIFilter';
 import { BookOpen, Calendar as CalendarIcon, Clock, MapPin } from 'lucide-react';
+import { caseMatchesCatalogScope } from '../utils/caseCatalog';
 
 export const CalendarPage: React.FC = () => {
   const {
     cases,
+    sois,
     classes,
     selectedSemesterId,
     selectedSoiId,
@@ -25,7 +27,7 @@ export const CalendarPage: React.FC = () => {
       (selectedSoiId === 'all' || item.soiId === selectedSoiId)
   );
   const scopedCases = cases.filter(
-    (item) => selectedSoiId === 'all' || item.soiId === selectedSoiId
+    (item) => caseMatchesCatalogScope(item, selectedSemesterId, selectedSoiId, sois)
   );
 
   return (

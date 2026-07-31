@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppProvider } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Layout } from './components/layout/Layout';
@@ -14,6 +14,7 @@ import { ReportsPage } from './pages/ReportsPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { LoginPage } from './pages/LoginPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { SystemUnavailableScreen } from './components/common/SystemUnavailableScreen';
 import { ProfileNotFoundScreen } from './components/common/ProfileNotFoundScreen';
 import { UserInactiveScreen } from './components/common/UserInactiveScreen';
@@ -31,6 +32,7 @@ const AppContent: React.FC = () => {
     refreshProfile,
     signOut,
   } = useAuth();
+  const location = useLocation();
 
   // 1. Initial health/auth check spinner
   if (isCheckingConnection || loading) {
@@ -49,12 +51,18 @@ const AppContent: React.FC = () => {
     return <SystemUnavailableScreen onRetry={checkSystemHealth} />;
   }
 
-  // 3. Unauthenticated users MUST strictly see ONLY the login page
+  // 3. Password recovery is a public route because the Supabase e-mail link
+  // establishes a short-lived recovery session only after opening this URL.
+  if (location.pathname === '/reset-password') {
+    return <ResetPasswordPage />;
+  }
+
+  // 4. Unauthenticated users MUST strictly see ONLY the login page
   if (!isAuthenticated) {
     return <LoginPage />;
   }
 
-  // 4. Authenticated, but Profile NOT FOUND in public.profiles
+  // 5. Authenticated, but Profile NOT FOUND in public.profiles
   if (!profile) {
     return (
       <ProfileNotFoundScreen
@@ -65,12 +73,12 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // 5. Authenticated, but Profile is INACTIVE
+  // 6. Authenticated, but Profile is INACTIVE
   if (profile.ativo === false) {
     return <UserInactiveScreen onSignOut={signOut} />;
   }
 
-  // 6. Authenticated & Active Profile -> Application Routes
+  // 7. Authenticated & Active Profile -> Application Routes
   return (
     <Layout>
       <Routes>

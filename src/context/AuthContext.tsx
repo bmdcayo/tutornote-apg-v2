@@ -11,6 +11,33 @@ export interface UserProfile {
   ativo: boolean;
 }
 
+export interface ProfessorRegistrationPayload {
+  fullName: string;
+  email: string;
+  password: string;
+  institution?: string;
+}
+
+export interface ProfessorRegistrationResult {
+  success: boolean;
+  requiresEmailConfirmation?: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface AccountProfileUpdatePayload {
+  fullName: string;
+  email: string;
+  institution: string;
+}
+
+export interface AccountProfileUpdateResult {
+  success: boolean;
+  emailConfirmationRequired?: boolean;
+  message?: string;
+  error?: string;
+}
+
 export function getInitials(name?: string | null): string {
   if (!name || !name.trim()) return 'U';
   // Remove common title prefixes if present in input string
@@ -41,6 +68,8 @@ interface AuthContextType {
   isCheckingConnection: boolean;
   isDemoMode: boolean;
   login: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  registerProfessor: (payload: ProfessorRegistrationPayload) => Promise<ProfessorRegistrationResult>;
+  updateAccountProfile: (payload: AccountProfileUpdatePayload) => Promise<AccountProfileUpdateResult>;
   loginDemo: () => void;
   resetPassword: (email: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   updatePassword: (password: string) => Promise<{ success: boolean; error?: string }>;
@@ -63,9 +92,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isCheckingConnection, setIsCheckingConnection] = useState<boolean>(true);
 
   // Environment check: Fallback to demo/local mode if Supabase is not configured
-  const isDev = Boolean(import.meta.env.DEV || import.meta.env.MODE === 'development');
-  const envDemoConfig = import.meta.env.VITE_ENABLE_DEMO_MODE === 'true';
-  const isDemoMode = isDev && envDemoConfig;
+  const envDemoConfig = import.meta.env.VITE_ENABLE_DEMO_MODE;
+  const isDemoMode = envDemoConfig === 'true' || envDemoConfig !== 'false' && !isSupabaseEnvConfigured();
 
   const fetchProfileFromDatabase = async (
     userId: string,
@@ -324,6 +352,225 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const registerProfessor = async (
+    payload: ProfessorRegistrationPayload
+  ): Promise<ProfessorRegistrationResult> => {
+    if (isDemoMode) {
+      return {
+        success: false,
+        error: 'O cadastro de contas está indisponível no modo demonstrativo.',
+      };
+    }
+
+    const fullName = payload.fullName.trim().replace(/\s+/g, ' ');
+    const normalizedEmail = payload.email.trim().toLowerCase();
+    const institution = payload.institution?.trim() || 'Faculdade de Medicina';
+
+    if (fullName.length < 3 || !fullName.includes(' ')) {
+      return {
+        success: false,
+        error: 'Informe o nome completo, incluindo nome e sobrenome.',
+      };
+    }
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return { success: false, error: 'Informe um e-mail válido.' };
+    }
+    if (payload.password.length < 8) {
+      return {
+        success: false,
+        error: 'A senha deve possuir pelo menos 8 caracteres.',
+      };
+    }
+
+    const client = getSupabaseClient();
+    if (!client) {
+      return { success: false, error: 'Serviço de autenticação indisponível.' };
+    }
+
+    try {
+      const emailRedirectTo =
+        typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { data, error: signUpError } = await client.auth.signUp({
+        email: normalizedEmail,
+        password: payload.password,
+        options: {
+          emailRedirectTo,
+          data: {
+            full_name: fullName,
+            institution,
+          },
+        },
+      });
+
+      if (signUpError) {
+        const rawMessage = signUpError.message?.toLowerCase() || '';
+        if (rawMessage.includes('already registered') || rawMessage.includes('already exists')) {
+          return {
+            success: false,
+            error: 'Este e-mail já possui uma conta. Utilize a opção “Esqueceu a senha?”.',
+          };
+        }
+        if (rawMessage.includes('signup') && rawMessage.includes('disabled')) {
+          return {
+            success: false,
+            error: 'Novos cadastros estão desabilitados no Supabase. Solicite a liberação ao administrador.',
+          };
+        }
+        if (rawMessage.includes('password')) {
+          return {
+            success: false,
+            error: 'A senha não atende aos requisitos de segurança configurados.',
+          };
+        }
+        return {
+          success: false,
+          error: signUpError.message || 'Não foi possível criar a conta.',
+        };
+      }
+
+      if (!data.user) {
+        return {
+          success: false,
+          error: 'O Supabase não confirmou a criação da conta.',
+        };
+      }
+
+      // Com confirmação de e-mail ativa, o Supabase pode ocultar a existência
+      // de uma conta e retornar um usuário sem identidades, em vez de um erro.
+      if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        return {
+          success: false,
+          error: 'Este e-mail já possui uma conta. Utilize a opção “Esqueceu a senha?”.',
+        };
+      }
+
+      if (data.session) {
+        setSession(data.session);
+        setUser(data.session.user);
+        setLoading(true);
+        const { profile: dbProfile, errorMsg } = await fetchProfileFromDatabase(
+          data.session.user.id,
+          data.session.user.email
+        );
+        setProfile(dbProfile);
+        setError(errorMsg);
+        setLoading(false);
+        return {
+          success: true,
+          requiresEmailConfirmation: false,
+          message: 'Conta de professor criada com sucesso.',
+        };
+      }
+
+      return {
+        success: true,
+        requiresEmailConfirmation: true,
+        message:
+          'Cadastro realizado. Abra o e-mail de confirmação enviado pelo sistema antes de entrar.',
+      };
+    } catch {
+      return {
+        success: false,
+        error: 'Falha de comunicação durante a criação da conta.',
+      };
+    }
+  };
+
+  const updateAccountProfile = async (
+    payload: AccountProfileUpdatePayload
+  ): Promise<AccountProfileUpdateResult> => {
+    if (isDemoMode) {
+      return {
+        success: false,
+        error: 'A alteração de perfil está indisponível no modo demonstrativo.',
+      };
+    }
+
+    const client = getSupabaseClient();
+    const activeUser = session?.user || user;
+    if (!client || !activeUser) {
+      return {
+        success: false,
+        error: 'Sessão de usuário indisponível. Entre novamente no sistema.',
+      };
+    }
+
+    const fullName = payload.fullName.trim().replace(/\s+/g, ' ');
+    const normalizedEmail = payload.email.trim().toLowerCase();
+    const institution = payload.institution.trim() || 'Faculdade de Medicina';
+    const currentEmail = (activeUser.email || profile?.email || '').trim().toLowerCase();
+    const emailChanged = normalizedEmail !== currentEmail;
+
+    if (fullName.length < 3 || !fullName.includes(' ')) {
+      return {
+        success: false,
+        error: 'Informe o nome completo, incluindo nome e sobrenome.',
+      };
+    }
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return { success: false, error: 'Informe um e-mail válido.' };
+    }
+
+    try {
+      const { error: authUpdateError } = await client.auth.updateUser({
+        ...(emailChanged ? { email: normalizedEmail } : {}),
+        data: {
+          full_name: fullName,
+          institution,
+        },
+      });
+
+      if (authUpdateError) {
+        const rawMessage = authUpdateError.message?.toLowerCase() || '';
+        if (rawMessage.includes('already') || rawMessage.includes('duplicate')) {
+          return {
+            success: false,
+            error: 'Este e-mail já está vinculado a outra conta.',
+          };
+        }
+        return {
+          success: false,
+          error: authUpdateError.message || 'Não foi possível atualizar os dados de acesso.',
+        };
+      }
+
+      const { error: profileUpdateError } = await client
+        .from('profiles')
+        .update({
+          nome: fullName,
+          instituicao: institution,
+        })
+        .eq('id', activeUser.id);
+
+      if (profileUpdateError) {
+        return {
+          success: false,
+          error: profileUpdateError.message || 'Não foi possível atualizar o perfil acadêmico.',
+        };
+      }
+
+      const { profile: refreshedProfile, errorMsg } = await fetchProfileFromDatabase(
+        activeUser.id,
+        activeUser.email
+      );
+      setProfile(refreshedProfile);
+      setError(errorMsg);
+
+      return {
+        success: true,
+        emailConfirmationRequired: emailChanged,
+        message: emailChanged
+          ? 'Dados atualizados. Confirme a alteração nos e-mails enviados pelo Supabase.'
+          : 'Informações pessoais atualizadas com sucesso.',
+      };
+    } catch {
+      return {
+        success: false,
+        error: 'Falha de comunicação durante a atualização do perfil.',
+      };
+    }
+  };
+
   const loginDemo = () => {
     if (!isDemoMode) return;
     const demoProf: UserProfile = {
@@ -353,23 +600,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: 'Serviço de banco de dados indisponível.' };
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return { success: false, error: 'Informe um e-mail válido.' };
+    }
+
     try {
       const redirectUrl =
         typeof window !== 'undefined'
           ? `${window.location.origin}/reset-password`
           : '/reset-password';
 
-      const { error: resetErr } = await client.auth.resetPasswordForEmail(email, {
+      const { error: resetErr } = await client.auth.resetPasswordForEmail(normalizedEmail, {
         redirectTo: redirectUrl,
       });
 
       if (resetErr) {
+        const rawMessage = resetErr.message?.toLowerCase() || '';
+        if (rawMessage.includes('rate limit') || rawMessage.includes('too many')) {
+          return {
+            success: false,
+            error: 'Muitas solicitações foram realizadas. Aguarde alguns minutos e tente novamente.',
+          };
+        }
         return { success: false, error: resetErr.message };
       }
 
       return {
         success: true,
-        message: 'Link para redefinição de senha enviado para seu e-mail com sucesso.',
+        message:
+          'Se o e-mail estiver cadastrado, enviaremos um link de redefinição. Verifique também a caixa de spam.',
       };
     } catch {
       return { success: false, error: 'Falha ao solicitar redefinição de senha.' };
@@ -412,6 +672,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isCheckingConnection,
         isDemoMode,
         login,
+        registerProfessor,
+        updateAccountProfile,
         loginDemo,
         resetPassword,
         updatePassword,

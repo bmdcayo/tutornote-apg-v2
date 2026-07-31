@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { APGCase, CaseStatus } from '../types';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
 import { SOIFilter } from '../components/common/SOIFilter';
+import {
+  canManageCatalogCase,
+  caseMatchesCatalogScope,
+  getCaseSOIName,
+} from '../utils/caseCatalog';
 import {
   BookOpen,
   Calendar,
@@ -17,6 +23,7 @@ import {
 } from 'lucide-react';
 
 export const CasesPage: React.FC = () => {
+  const { user, profile } = useAuth();
   const {
     cases,
     classes,
@@ -69,7 +76,7 @@ export const CasesPage: React.FC = () => {
   );
 
   const filteredCases = cases.filter((c) => {
-    if (selectedSoiId !== 'all' && c.soiId !== selectedSoiId) return false;
+    if (!caseMatchesCatalogScope(c, selectedSemesterId, selectedSoiId, sois)) return false;
     if (selectedUnit !== 'all' && c.unit.toString() !== selectedUnit) return false;
     return true;
   });
@@ -269,6 +276,7 @@ export const CasesPage: React.FC = () => {
         ) : (
           filteredCases.map((c) => {
             const problemCode = `S${String(c.week).padStart(2, '0')}P${c.problemNumber || c.caseNumber || 1}`;
+            const canManage = canManageCatalogCase(c, user?.id, profile?.papel, sois);
             return (
               <div
                 key={c.id}
@@ -293,7 +301,7 @@ export const CasesPage: React.FC = () => {
                     </Badge>
                   </div>
                   <p className="mb-1 text-[11px] font-bold text-blue-600 dark:text-blue-400">
-                    {sois.find((soi) => soi.id === c.soiId)?.name || 'SOI não identificado'}
+                    {getCaseSOIName(c, sois)}
                   </p>
 
                   <h3 className="text-base font-black text-slate-900 dark:text-white line-clamp-1">
@@ -320,25 +328,34 @@ export const CasesPage: React.FC = () => {
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                  <span className="text-[10px] text-slate-400">
-                    {c.learningObjectives.length} Objetivos de Aprendizagem
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleOpenEditModal(c)}
-                      className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                      title="Editar Caso"
-                    >
-                      <Edit3 className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => handleOpenDeleteModal(c)}
-                      className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
-                      title="Excluir Caso"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                  <div>
+                    <span className="block text-[10px] text-slate-400">
+                      {c.learningObjectives.length} Objetivos de Aprendizagem
+                    </span>
+                    {!canManage && (
+                      <span className="mt-1 block text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                        Caso compartilhado — disponível para aplicar
+                      </span>
+                    )}
                   </div>
+                  {canManage && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleOpenEditModal(c)}
+                        className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                        title="Editar Caso"
+                      >
+                        <Edit3 className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleOpenDeleteModal(c)}
+                        className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
+                        title="Excluir Caso"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );

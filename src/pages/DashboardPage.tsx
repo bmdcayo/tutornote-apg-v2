@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { caseMatchesCatalogScope } from '../utils/caseCatalog';
 import { StatCard } from '../components/common/StatCard';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
@@ -41,6 +42,7 @@ export const DashboardPage: React.FC = () => {
     classes,
     groups,
     cases,
+    sois,
     evaluations,
     settings,
     tableAllocations,
@@ -73,7 +75,7 @@ export const DashboardPage: React.FC = () => {
 
   // Filtered cases
   const filteredCases = cases.filter((c) => {
-    if (selectedSoiId !== 'all' && c.soiId !== selectedSoiId) return false;
+    if (!caseMatchesCatalogScope(c, selectedSemesterId, selectedSoiId, sois)) return false;
     if (selectedUnit !== 'all' && c.unit.toString() !== selectedUnit) return false;
     if (selectedWeek !== 'all' && c.week.toString() !== selectedWeek) return false;
     return true;
@@ -91,15 +93,15 @@ export const DashboardPage: React.FC = () => {
 
   // Requirement 3: S08P2 status check globally (regardless of current week filter)
   const isS08P2Finalized = useMemo(() => {
-    const caseW8 = cases.find((c) => c.week === 8 || c.caseNumber === 8);
+    const caseW8 = filteredCases.find((c) => c.week === 8 || c.caseNumber === 8);
     const isCaseW8Finalized = caseW8
       ? caseW8.status === 'realizado' || (caseW8 as any).status === 'finalizada'
       : false;
-    const hasConcludedEvalsW8 = evaluations.some(
+    const hasConcludedEvalsW8 = filteredEvaluations.some(
       (e) => e.week === 8 && e.status === 'Concluído'
     );
     return isCaseW8Finalized || hasConcludedEvalsW8;
-  }, [cases, evaluations]);
+  }, [filteredCases, filteredEvaluations]);
 
   const unassignedUnit2StudentsCount = useMemo(() => {
     if (students.length === 0) return 0;

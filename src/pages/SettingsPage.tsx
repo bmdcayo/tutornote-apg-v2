@@ -1,23 +1,45 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { getSupabaseClient, isSupabaseEnvConfigured } from '../lib/supabase';
 import { Badge } from '../components/common/Badge';
 import {
   AlertCircle,
+  Building2,
   CheckCircle2,
   Database,
+  KeyRound,
   Loader2,
+  Mail,
   RotateCcw,
   Save,
   Settings as SettingsIcon,
   Sliders,
+  UserRound,
   Wifi,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings } = useApp();
-  const { isDemoMode } = useAuth();
+  const {
+    profile,
+    updateAccountProfile,
+    updatePassword,
+    isDemoMode,
+  } = useAuth();
+
+  // Personal profile and password state
+  const [profileName, setProfileName] = useState(profile?.nome || '');
+  const [profileEmail, setProfileEmail] = useState(profile?.email || '');
+  const [profileInstitution, setProfileInstitution] = useState(profile?.instituicao || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileNotice, setProfileNotice] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirmation, setNewPasswordConfirmation] = useState('');
+  const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [passwordNotice, setPasswordNotice] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   // Barema state
   const [maxBarema, setMaxBarema] = useState(settings.maxBaremaScore);
@@ -33,6 +55,56 @@ export const SettingsPage: React.FC = () => {
     message: string;
     tableExists?: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    setProfileName(profile?.nome || '');
+    setProfileEmail(profile?.email || '');
+    setProfileInstitution(profile?.instituicao || '');
+  }, [profile?.nome, profile?.email, profile?.instituicao]);
+
+  const handleSaveProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setProfileNotice('');
+    setProfileError('');
+    setIsSavingProfile(true);
+    const result = await updateAccountProfile({
+      fullName: profileName,
+      email: profileEmail,
+      institution: profileInstitution,
+    });
+    setIsSavingProfile(false);
+
+    if (!result.success) {
+      setProfileError(result.error || 'Não foi possível atualizar as informações pessoais.');
+      return;
+    }
+    setProfileNotice(result.message || 'Informações pessoais atualizadas com sucesso.');
+  };
+
+  const handleChangePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPasswordNotice('');
+    setPasswordError('');
+    if (newPassword.length < 8) {
+      setPasswordError('A nova senha deve possuir pelo menos 8 caracteres.');
+      return;
+    }
+    if (newPassword !== newPasswordConfirmation) {
+      setPasswordError('A confirmação não corresponde à nova senha.');
+      return;
+    }
+
+    setIsSavingPassword(true);
+    const result = await updatePassword(newPassword);
+    setIsSavingPassword(false);
+    if (!result.success) {
+      setPasswordError(result.error || 'Não foi possível alterar a senha.');
+      return;
+    }
+    setNewPassword('');
+    setNewPasswordConfirmation('');
+    setPasswordNotice('Senha alterada com sucesso.');
+  };
 
   const handleSaveBarema = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +175,181 @@ export const SettingsPage: React.FC = () => {
           <AlertCircle className="h-4 w-4" /><span>{saveError}</span>
         </div>
       )}
+
+      {/* Personal profile and security */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <form
+          onSubmit={handleSaveProfile}
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4"
+        >
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+            <UserRound className="h-4 w-4 text-[#1E3A8A] dark:text-blue-400" />
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Minhas informações pessoais
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Estes dados identificam o professor no sistema.
+              </p>
+            </div>
+          </div>
+
+          {profileError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+              {profileError}
+            </div>
+          )}
+          {profileNotice && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+              {profileNotice}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Nome completo
+            </label>
+            <div className="relative">
+              <UserRound className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                value={profileName}
+                onChange={(event) => setProfileName(event.target.value)}
+                autoComplete="name"
+                required
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              E-mail de acesso
+            </label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                type="email"
+                value={profileEmail}
+                onChange={(event) => setProfileEmail(event.target.value)}
+                autoComplete="email"
+                required
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+            <p className="text-[10px] leading-relaxed text-amber-600 dark:text-amber-300">
+              A troca do e-mail pode exigir confirmação no endereço atual e no novo.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Instituição
+            </label>
+            <div className="relative">
+              <Building2 className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                value={profileInstitution}
+                onChange={(event) => setProfileInstitution(event.target.value)}
+                autoComplete="organization"
+                placeholder="Faculdade de Medicina"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSavingProfile || isDemoMode}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSavingProfile ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            Salvar informações pessoais
+          </button>
+        </form>
+
+        <form
+          onSubmit={handleChangePassword}
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4"
+        >
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+            <KeyRound className="h-4 w-4 text-amber-500" />
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Alterar minha senha
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                A nova senha passa a valer no próximo acesso.
+              </p>
+            </div>
+          </div>
+
+          {passwordError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+              {passwordError}
+            </div>
+          )}
+          {passwordNotice && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+              {passwordNotice}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Nova senha
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="Mínimo de 8 caracteres"
+              required
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Confirmar nova senha
+            </label>
+            <input
+              type="password"
+              value={newPasswordConfirmation}
+              onChange={(event) => setNewPasswordConfirmation(event.target.value)}
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="Repita a nova senha"
+              required
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            />
+          </div>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            Utilize uma senha exclusiva e não a compartilhe com outros professores.
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSavingPassword || isDemoMode}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSavingPassword ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <KeyRound className="h-4 w-4" />
+            )}
+            Alterar senha
+          </button>
+        </form>
+      </div>
 
       {/* Barema Rules Settings */}
       <form

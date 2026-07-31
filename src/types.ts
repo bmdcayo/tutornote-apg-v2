@@ -118,6 +118,10 @@ export interface Semester {
 export interface APGCase {
   id: string;
   soiId?: string;
+  semesterId?: string;
+  soiCode?: string;
+  soiName?: string;
+  createdBy?: string;
   classId?: string;
   problemNumber?: 1 | 2;
   caseNumber: number; // e.g. 1

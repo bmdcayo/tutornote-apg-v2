@@ -55,7 +55,7 @@ export async function saveCaseInSupabase(
     const { data, error } = await client
       .from('casos_apg')
       .upsert(payload, { onConflict: 'soi_id,semana,numero' })
-      .select('id, soi_id, turma_id, numero, semana, titulo, tema, descricao, objetivos, instrucoes_tutor, data, hora_inicio, sala, status')
+      .select('id, soi_id, semestre_id, soi_codigo, soi_nome, created_by, turma_id, numero, semana, titulo, tema, descricao, objetivos, instrucoes_tutor, data, hora_inicio, sala, status')
       .single();
 
     if (error || !data) {
@@ -67,6 +67,10 @@ export async function saveCaseInSupabase(
       data: {
         id: data.id,
         soiId: data.soi_id,
+        semesterId: data.semestre_id || undefined,
+        soiCode: data.soi_codigo || undefined,
+        soiName: data.soi_nome || undefined,
+        createdBy: data.created_by || undefined,
         classId: data.turma_id || undefined,
         problemNumber: Number(data.numero) === 2 ? 2 : 1,
         caseNumber: Number(data.numero) === 2 ? 2 : 1,
