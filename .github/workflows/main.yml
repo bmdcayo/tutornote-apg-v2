@@ -1,0 +1,77 @@
+name: 'Backup Automático da Base de Dados (Supabase & Google Drive)'
+
+on:
+  # Agendamento: Terças e Sextas-feiras às 14:00 (Horário de Brasília) = 17:00 UTC
+  schedule:
+    - cron: '0 17 * * 2,5'
+
+  # Permite disparo manual com 1 clique pela aba Actions no GitHub
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backup-and-sync:
+    name: 'Extrair Dados, Salvar no GitHub e Enviar ao Google Drive'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Clonar Repositório
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🟢 Configurar Ambiente Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Instalar Dependências
+        run: npm ci || npm install
+
+      - name: 🗄️ Executar Snapshot do Banco de Dados (Supabase)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          npx tsx scripts/backup-database.ts
+
+      - name: ☁️ Enviar Backup para o Google Drive
+        env:
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_BACKUP_EMAIL: 'bmdcayo@gmail.com'
+        run: |
+          npx tsx scripts/upload-google-drive.ts
+
+      - name: 💾 Commit & Push dos Arquivos de Backup no GitHub
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add backups/
+          if git diff --staged --quiet; then
+            echo "Nenhuma alteração nos arquivos de backup detectada."
+          else
+            TIMESTAMP=$(date +"%d/%m/%Y %H:%M")
+            git commit -m "chore(backup): snapshot automático da base de dados [$TIMESTAMP] [skip ci]"
+            git push origin HEAD
+          fi
+
+      - name: 📎 Salvar Artefato no GitHub Actions (Retenção 90 dias)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tutornote-database-backup
+          path: backups/
+          retention-days: 90
+
+      - name: 📋 Exibir Resumo no Job Summary
+        if: always()
+        run: |
+          if [ -f backups/backup_summary.md ]; then
+            cat backups/backup_summary.md >> $GITHUB_STEP_SUMMARY
+          fi
