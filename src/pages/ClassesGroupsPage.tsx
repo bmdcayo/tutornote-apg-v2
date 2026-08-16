@@ -36,6 +36,7 @@ export const ClassesGroupsPage: React.FC = () => {
     semesters,
     sois,
     tableAllocations,
+    getStudentAllocation,
     selectedSemesterId: globalSemesterId,
     selectedSemester: globalSemesterName,
     selectedSoiId,
@@ -55,7 +56,39 @@ export const ClassesGroupsPage: React.FC = () => {
     clearClassError,
   } = useApp();
 
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
+
+  const canEditClass = useCallback(
+    (cls: Class): boolean => {
+      if (!profile) return true;
+      const role = (profile.papel || '').toLowerCase().trim();
+      if (role === 'administrador' || role === 'admin') return true;
+      if (role === 'visualizador' || role === 'viewer') return false;
+
+      const currentUserId = profile.id || user?.id;
+      if (cls.professorId && currentUserId && cls.professorId === currentUserId) return true;
+      if (cls.createdBy && currentUserId && cls.createdBy === currentUserId) return true;
+
+      if (
+        cls.responsibleTeacher &&
+        profile.nome &&
+        cls.responsibleTeacher.trim().toLowerCase() === profile.nome.trim().toLowerCase()
+      ) {
+        return true;
+      }
+
+      if (
+        !cls.professorId &&
+        !cls.createdBy &&
+        (!cls.responsibleTeacher || cls.responsibleTeacher === 'Docente não identificado')
+      ) {
+        return true;
+      }
+
+      return false;
+    },
+    [profile, user]
+  );
   const [activeTab, setActiveTab] = useState<'sois' | 'turmas' | 'grupos' | 'importar'>('sois');
   const [showSOIModal, setShowSOIModal] = useState(false);
   const [soiName, setSoiName] = useState('');
@@ -75,14 +108,21 @@ export const ClassesGroupsPage: React.FC = () => {
   const [isSubmittingClass, setIsSubmittingClass] = useState(false);
 
   // Filter classes by global selected semester
-  const filteredClasses = classes
-    .filter((cls) => {
-      if (!globalSemesterId && !globalSemesterName) return true;
-      if (globalSemesterId && cls.semesterId === globalSemesterId) return true;
-      if (globalSemesterName && cls.yearSemester === globalSemesterName) return true;
-      return false;
-    })
-    .filter((cls) => selectedSoiId === 'all' || cls.soiId === selectedSoiId);
+  const semesterClasses = classes.filter((cls) => {
+    if (!globalSemesterId && !globalSemesterName) return true;
+    if (globalSemesterId && cls.semesterId === globalSemesterId) return true;
+    if (globalSemesterName && cls.yearSemester === globalSemesterName) return true;
+    return false;
+  });
+  const soiFilteredClasses = semesterClasses.filter(
+    (cls) => selectedSoiId === 'all' || !cls.soiId || cls.soiId === selectedSoiId
+  );
+  const filteredClasses =
+    soiFilteredClasses.length > 0
+      ? soiFilteredClasses
+      : semesterClasses.length > 0
+      ? semesterClasses
+      : classes;
 
   const semesterSOIs = sois.filter((soi) => !globalSemesterId || soi.semesterId === globalSemesterId);
 
@@ -217,6 +257,29 @@ export const ClassesGroupsPage: React.FC = () => {
   const [importCsvText, setImportCsvText] = useState('');
   const [importClassId, setImportClassId] = useState(classes[0]?.id || '');
   const [importGroupId, setImportGroupId] = useState(groups[0]?.id || '');
+  const [isProcessingImport, setIsProcessingImport] = useState(false);
+  const [importNotice, setImportNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Keep importClassId and importGroupId synchronized with available classes and groups
+  useEffect(() => {
+    if (!importClassId && classes.length > 0) {
+      setImportClassId(classes[0].id);
+    }
+  }, [classes, importClassId]);
+
+  useEffect(() => {
+    if (importClassId) {
+      const validGroups = groups.filter((g) => g.classId === importClassId);
+      if (validGroups.length > 0) {
+        const exists = validGroups.some((g) => g.id === importGroupId);
+        if (!exists) {
+          setImportGroupId(validGroups[0].id);
+        }
+      } else {
+        setImportGroupId('');
+      }
+    }
+  }, [importClassId, groups, importGroupId]);
 
   const handleCreateClassSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -356,14 +419,47 @@ export const ClassesGroupsPage: React.FC = () => {
     setShowGroupModal(false);
   };
 
-  const handleProcessImport = () => {
-    if (!importCsvText.trim()) return;
+  const handleProcessImport = async () => {
+    setImportNotice(null);
+
+    if (!importCsvText.trim()) {
+      setImportNotice({
+        type: 'error',
+        message: 'Por favor, insira o texto no formato CSV/XLSX com os dados dos alunos.',
+      });
+      return;
+    }
+
+    if (!importClassId) {
+      setImportNotice({
+        type: 'error',
+        message: 'Selecione a turma de destino para os estudantes.',
+      });
+      return;
+    }
+
+    if (!importGroupId) {
+      setImportNotice({
+        type: 'error',
+        message: 'Selecione a mesa / grupo de destino para os estudantes.',
+      });
+      return;
+    }
+
+    const targetClass = classes.find((c) => c.id === importClassId);
+    const targetGroup = groups.find((g) => g.id === importGroupId);
 
     const lines = importCsvText.split('\n');
     const importedList: Omit<Student, 'id'>[] = [];
 
     lines.forEach((line) => {
-      const parts = line.split(',').map((p) => p.trim());
+      const cleanLine = line.trim();
+      if (!cleanLine || cleanLine.toLowerCase().startsWith('nome') || cleanLine.toLowerCase().startsWith('aluno')) {
+        return; // Skip empty lines and header rows
+      }
+
+      // Support comma, semicolon, or tab separators
+      let parts = cleanLine.split(/[,;\t]/).map((p) => p.trim().replace(/^["']|["']$/g, ''));
       if (parts.length >= 2 && parts[0] && parts[1]) {
         importedList.push({
           name: parts[0],
@@ -375,10 +471,38 @@ export const ClassesGroupsPage: React.FC = () => {
       }
     });
 
-    if (importedList.length > 0) {
-      importStudents(importedList);
-      setImportCsvText('');
-      alert(`${importedList.length} estudante(s) importados com sucesso!`);
+    if (importedList.length === 0) {
+      setImportNotice({
+        type: 'error',
+        message: 'Nenhum estudante válido foi encontrado no texto digitado. Use o formato: Nome, Matrícula, Email',
+      });
+      return;
+    }
+
+    setIsProcessingImport(true);
+    try {
+      const res = await importStudents(importedList);
+      if (res.success) {
+        setImportCsvText('');
+        const classNameStr = targetClass?.name || 'Turma selecionada';
+        const groupNameStr = targetGroup?.name || 'Mesa selecionada';
+        setImportNotice({
+          type: 'success',
+          message: `Sucesso! ${res.importedCount || importedList.length} estudante(s) foram importados e alocados em "${groupNameStr}" (${classNameStr}).`,
+        });
+      } else {
+        setImportNotice({
+          type: 'error',
+          message: res.error || 'Não foi possível importar os estudantes no banco de dados.',
+        });
+      }
+    } catch (err: any) {
+      setImportNotice({
+        type: 'error',
+        message: err.message || 'Erro inesperado ao processar a importação de alunos.',
+      });
+    } finally {
+      setIsProcessingImport(false);
     }
   };
 
@@ -387,7 +511,7 @@ export const ClassesGroupsPage: React.FC = () => {
       {/* Page Title & Tab Selector */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight">
+          <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight">
             Módulo de Turmas e Mesas
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -401,7 +525,7 @@ export const ClassesGroupsPage: React.FC = () => {
             onClick={() => setActiveTab('sois')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
               activeTab === 'sois'
-                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                ? 'bg-[#C20054] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
             }`}
           >
@@ -411,7 +535,7 @@ export const ClassesGroupsPage: React.FC = () => {
             onClick={() => setActiveTab('turmas')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
               activeTab === 'turmas'
-                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                ? 'bg-[#C20054] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
             }`}
           >
@@ -421,7 +545,7 @@ export const ClassesGroupsPage: React.FC = () => {
             onClick={() => setActiveTab('grupos')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
               activeTab === 'grupos'
-                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                ? 'bg-[#C20054] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
             }`}
           >
@@ -431,7 +555,7 @@ export const ClassesGroupsPage: React.FC = () => {
             onClick={() => setActiveTab('importar')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
               activeTab === 'importar'
-                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                ? 'bg-[#C20054] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
             }`}
           >
@@ -495,7 +619,7 @@ export const ClassesGroupsPage: React.FC = () => {
                 setShowSOIModal(true);
               }}
               disabled={!globalSemesterId}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
               Cadastrar SOI
@@ -561,7 +685,7 @@ export const ClassesGroupsPage: React.FC = () => {
           <div className="flex justify-end">
             <button
               onClick={handleOpenClassModal}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 shadow-xs transition-all"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 shadow-xs transition-all"
             >
               <Plus className="h-4 w-4" />
               <span>Cadastrar Nova Turma</span>
@@ -599,13 +723,22 @@ export const ClassesGroupsPage: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="primary">{totalDistinctAlunos} Alunos</Badge>
-                      <button
-                        onClick={() => handleOpenDeleteModal(cls)}
-                        className="text-slate-400 hover:text-rose-600 transition-colors p-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                        title="Excluir turma"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {canEditClass(cls) ? (
+                        <button
+                          onClick={() => handleOpenDeleteModal(cls)}
+                          className="text-slate-400 hover:text-rose-600 transition-colors p-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                          title="Excluir turma"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ) : (
+                        <span
+                          className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-md"
+                          title="Apenas o professor responsável ou administrador pode alterar/excluir esta turma"
+                        >
+                          Somente Leitura
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -622,13 +755,18 @@ export const ClassesGroupsPage: React.FC = () => {
                     <label className="mt-3 block text-[10px] font-bold uppercase text-slate-400">SOI da turma</label>
                     <select
                       value={cls.soiId || ''}
+                      disabled={!canEditClass(cls)}
                       onChange={async (event) => {
+                        if (!canEditClass(cls)) return;
                         const result = await updateClassInDatabase({ ...cls, soiId: event.target.value });
                         if (!result.success) {
                           setRetryNotice(result.error || 'Não foi possível alterar o SOI da turma.');
                         }
                       }}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      title={!canEditClass(cls) ? 'Apenas o professor criador ou administrador pode alterar o SOI desta turma' : undefined}
+                      className={`mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${
+                        !canEditClass(cls) ? 'opacity-60 cursor-not-allowed' : ''
+                      }`}
                     >
                       <option value="">Selecione o SOI</option>
                       {sois
@@ -688,7 +826,7 @@ export const ClassesGroupsPage: React.FC = () => {
           <div className="flex justify-end">
             <button
               onClick={() => setShowGroupModal(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 shadow-xs"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-900 shadow-xs"
             >
               <Plus className="h-4 w-4" />
               <span>Criar Novo Grupo APG</span>
@@ -697,7 +835,12 @@ export const ClassesGroupsPage: React.FC = () => {
 
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             {groups.filter((grp) => filteredClasses.some((cls) => cls.id === grp.classId)).map((grp) => {
-              const groupStudents = students.filter((s) => s.groupId === grp.id);
+              const groupStudents = students.filter((s) => {
+                if (s.groupId === grp.id) return true;
+                const alloc1 = getStudentAllocation(s.id, 1);
+                const alloc2 = getStudentAllocation(s.id, 2);
+                return alloc1?.groupId === grp.id || alloc2?.groupId === grp.id;
+              });
               const parentClass = classes.find((c) => c.id === grp.classId);
 
               return (
@@ -759,7 +902,7 @@ export const ClassesGroupsPage: React.FC = () => {
       {activeTab === 'importar' && (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
               <FileSpreadsheet className="h-5 w-5" />
             </div>
             <div>
@@ -767,10 +910,25 @@ export const ClassesGroupsPage: React.FC = () => {
                 Importação em Lote de Estudantes (XLSX / CSV)
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Cole linhas no formato: <code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-indigo-900">Nome, Matrícula, Email</code>
+                Cole linhas no formato: <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-indigo-900 dark:text-indigo-300">Nome, Matrícula, Email</code>
               </p>
             </div>
           </div>
+
+          {importNotice && (
+            <div
+              className={`flex items-center justify-between rounded-xl border p-3.5 text-xs font-bold ${
+                importNotice.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300'
+              }`}
+            >
+              <span>{importNotice.message}</span>
+              <button onClick={() => setImportNotice(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -782,9 +940,9 @@ export const ClassesGroupsPage: React.FC = () => {
                 onChange={(e) => setImportClassId(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                {filteredClasses.map((c) => (
+                {(semesterClasses.length > 0 ? semesterClasses : classes).map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {c.name} {c.soiId ? `(${sois.find((s) => s.id === c.soiId)?.name || 'SOI'})` : ''}
                   </option>
                 ))}
               </select>
@@ -821,10 +979,20 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
 
           <button
             onClick={handleProcessImport}
-            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 shadow-xs"
+            disabled={isProcessingImport}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 shadow-xs disabled:opacity-50 transition-all cursor-pointer"
           >
-            <Upload className="h-4 w-4" />
-            <span>Processar e Importar Alunos</span>
+            {isProcessingImport ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Importando e Alocando...</span>
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4" />
+                <span>Processar e Importar Alunos</span>
+              </>
+            )}
           </button>
         </div>
       )}
@@ -872,7 +1040,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
               <button
                 type="submit"
                 disabled={isSavingSOI || !globalSemesterId || !soiName.trim()}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-5 py-2 text-xs font-bold text-white disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-5 py-2 text-xs font-bold text-white disabled:opacity-50"
               >
                 {isSavingSOI && <Loader2 className="h-4 w-4 animate-spin" />}
                 Salvar SOI
@@ -929,7 +1097,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
               </label>
               {isLoadingSemestres ? (
                 <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-[#1E3A8A]" />
+                  <Loader2 className="h-4 w-4 animate-spin text-[#C20054]" />
                   <span>Consultando semestres ativos no Supabase...</span>
                 </div>
               ) : activeSemestres.length === 0 ? (
@@ -1018,7 +1186,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
               <button
                 type="submit"
                 disabled={isSubmittingClass || isLoadingSemestres || activeSemestres.length === 0 || !modalSelectedSemesterId || !modalSelectedSoiId}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-5 py-2 text-xs font-bold text-white hover:bg-indigo-900 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-5 py-2 text-xs font-bold text-white hover:bg-indigo-900 disabled:opacity-50"
               >
                 {isSubmittingClass ? (
                   <>
@@ -1093,7 +1261,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#1E3A8A] px-4 py-2 text-xs font-bold text-white hover:bg-indigo-900"
+                className="rounded-xl bg-[#C20054] px-4 py-2 text-xs font-bold text-white hover:bg-indigo-900"
               >
                 Salvar Grupo
               </button>
@@ -1139,7 +1307,7 @@ Igor Machado, 20261052, igor.m@med.edu.br`}
               </span>
               {isLoadingCounts ? (
                 <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-[#1E3A8A]" />
+                  <Loader2 className="h-4 w-4 animate-spin text-[#C20054]" />
                   <span>Verificando registros vinculados no Supabase...</span>
                 </div>
               ) : (

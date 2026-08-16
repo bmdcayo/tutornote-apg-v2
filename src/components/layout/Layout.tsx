@@ -10,7 +10,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#F3F4F6] text-[#111827] dark:bg-slate-950 dark:text-slate-100 font-sans transition-colors">
+    <div className="flex h-screen w-full overflow-hidden bg-white text-slate-900 dark:bg-black dark:text-slate-100 font-sans transition-colors">
       {/* Sidebar */}
       <Sidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
 

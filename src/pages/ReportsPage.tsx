@@ -59,7 +59,7 @@ export const ReportsPage: React.FC = () => {
 
   const scopedClasses = classes.filter(
     (item) =>
-      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (!selectedSemesterId || selectedSemesterId === 'all' || item.semesterId === selectedSemesterId) &&
       (selectedSoiId === 'all' || item.soiId === selectedSoiId)
   );
   const scopedClassIds = new Set(scopedClasses.map((item) => item.id));
@@ -150,10 +150,10 @@ export const ReportsPage: React.FC = () => {
       'presença',
       'atestado',
       'papel',
-      'abertura de problema',
-      'postura e colaboração',
-      'fechamento de problema',
-      'assiduidade',
+      'abertura',
+      'postura',
+      'desempenho',
+      'fechamento',
       'nota bruta de 20',
       'média semanal',
       'nota da primeira unidade de 20',
@@ -198,8 +198,8 @@ export const ReportsPage: React.FC = () => {
         // Scores for individual criteria
         const critAbertura = evalItem.criterionScores['crit_1'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
         const critPostura = evalItem.criterionScores['crit_2'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
-        const critFechamento = evalItem.criterionScores['crit_3'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
-        const critAssiduidade = evalItem.criterionScores['crit_4'] ?? null;
+        const critDesempenho = evalItem.criterionScores['crit_3'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
+        const critFechamento = evalItem.criterionScores['crit_4'] ?? (evalItem.attendance === 'Ausente' ? 0 : null);
 
         const rowData = [
           sum.studentName,
@@ -215,8 +215,8 @@ export const ReportsPage: React.FC = () => {
           evalItem.role,
           critAbertura !== null ? Number(critAbertura.toFixed(2)) : '-',
           critPostura !== null ? Number(critPostura.toFixed(2)) : '-',
+          critDesempenho !== null ? Number(critDesempenho.toFixed(2)) : '-',
           critFechamento !== null ? Number(critFechamento.toFixed(2)) : '-',
-          critAssiduidade !== null ? Number(critAssiduidade.toFixed(2)) : '-',
           Number(evalItem.totalGrossScore.toFixed(2)),
           weeklyAvg !== null ? Number(weeklyAvg.toFixed(2)) : '-',
           Number(sum.unit1Grade.toFixed(2)),
@@ -623,7 +623,7 @@ export const ReportsPage: React.FC = () => {
     // Calculate Average per Criterion (0..5)
     let sumCrit1 = 0, sumCrit2 = 0, sumCrit3 = 0, sumCrit4 = 0, countEval = 0;
     studentEvals.forEach((e) => {
-      if (e.attendance !== 'Atestado' && e.status === 'Concluído') {
+      if (e.attendance === 'Presente') {
         sumCrit1 += e.criterionScores['crit_1'] ?? 0;
         sumCrit2 += e.criterionScores['crit_2'] ?? 0;
         sumCrit3 += e.criterionScores['crit_3'] ?? 0;
@@ -641,7 +641,7 @@ export const ReportsPage: React.FC = () => {
     doc.text('Média por Critério (Escala 0 a 5.0):', 14, y);
     doc.setFont('helvetica', 'normal');
     doc.text(
-      `1. Abertura: ${avgC1}  |  2. Postura/Colaboração: ${avgC2}  |  3. Fechamento: ${avgC3}  |  4. Assiduidade: ${avgC4}`,
+      `1. Abertura/Pontualidade: ${avgC1}  |  2. Postura/Grupo: ${avgC2}  |  3. Domínio Técnico: ${avgC3}  |  4. Fechamento: ${avgC4}`,
       70,
       y
     );
@@ -873,7 +873,7 @@ export const ReportsPage: React.FC = () => {
       {/* Header & Main Export Action Bar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight">
+          <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight">
             Módulo de Relatórios e Exportação Oficial
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -906,7 +906,7 @@ export const ReportsPage: React.FC = () => {
           {reportType === 'individual' && (
             <button
               onClick={() => runExport(() => handleExportIndividualPDF())}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all"
             >
               <FileText className="h-4 w-4" />
               <span>Gerar Relatório Individual (PDF)</span>
@@ -924,7 +924,7 @@ export const ReportsPage: React.FC = () => {
             onClick={() => setReportType('consolidado')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
               reportType === 'consolidado'
-                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                ? 'bg-[#C20054] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
             }`}
           >
@@ -944,7 +944,7 @@ export const ReportsPage: React.FC = () => {
             onClick={() => setReportType('individual')}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
               reportType === 'individual'
-                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                ? 'bg-[#C20054] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300'
             }`}
           >
@@ -1201,7 +1201,7 @@ export const ReportsPage: React.FC = () => {
 
                       <button
                         onClick={() => runExport(() => handleExportIndividualPDF(sum.studentId))}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-[#1E3A8A] hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300 transition-colors"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-[#C20054] hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300 transition-colors"
                       >
                         <FileText className="h-3.5 w-3.5" />
                         <span>Baixar PDF Individual</span>
@@ -1252,7 +1252,7 @@ export const ReportsPage: React.FC = () => {
                               key={e.id}
                               className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                             >
-                              <span className="font-bold text-[#1E3A8A] dark:text-blue-400 block mb-1">
+                              <span className="font-bold text-[#C20054] dark:text-blue-400 block mb-1">
                                 Semana {e.week} • Papel: {e.role}
                               </span>
                               <p className="whitespace-pre-line">{e.pedagogicalFeedback}</p>

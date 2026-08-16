@@ -15,7 +15,7 @@ export const SOIFilter: React.FC<SOIFilterProps> = ({ compact = false }) => {
   } = useApp();
 
   const available = sois.filter(
-    (soi) => !selectedSemesterId || soi.semesterId === selectedSemesterId
+    (soi) => !selectedSemesterId || selectedSemesterId === 'all' || soi.semesterId === selectedSemesterId
   );
 
   return (

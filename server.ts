@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import * as fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";

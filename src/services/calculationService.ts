@@ -31,10 +31,12 @@ export function formatGrade(num: number | null | undefined): string {
 
 /**
  * Calculates total gross score for a single evaluation session (max 20.0 pts)
+ * Formula: Sum(Domain Scores) + AdjustmentScore, clamped between 0.0 and 20.0
  */
 export function calculateEvaluationTotalScore(
   criterionScores: Record<string, number>,
-  criteria: BaremaCriterion[]
+  criteria: BaremaCriterion[],
+  adjustmentScore: number = 0
 ): number {
   if (!criterionScores) return 0;
 
@@ -46,17 +48,17 @@ export function calculateEvaluationTotalScore(
     sum += clampedVal;
   }
 
-  // Total max for evaluation is 20.0
-  const maxTotal = criteria.reduce((acc, c) => acc + c.maxScore, 0);
-  const cappedTotal = Math.min(sum, Math.min(maxTotal, 20.0));
+  // Apply manual teacher adjustment (positive or negative)
+  sum += Number(adjustmentScore) || 0;
+
+  // Total max for evaluation is 20.0, minimum is 0.0
+  const cappedTotal = Math.min(sum, 20.0);
   return roundTo2Decimals(Math.max(0, cappedTotal));
 }
 
 /**
  * Determines whether an evaluation is valid for average calculation.
- * Presente and Ausente are valid for calculation. In an absence, only the
- * "Fechamento de problema" category is forced to zero; the remaining
- * categories keep the score recorded by the professor.
+ * Presente and Ausente are valid for calculation (Ausente counts as 0).
  * Atestado is excluded from denominator and numerator.
  * Pendente/Rascunho is excluded while not finalized.
  */
@@ -70,8 +72,7 @@ export function getEffectiveScoreForEvaluation(evalItem: Evaluation): number | n
   }
 
   if (evalItem.attendance === 'Ausente') {
-    // The closing category is already forced to zero before persistence.
-    return Math.max(0, Math.min(evalItem.totalGrossScore, 15.0));
+    return 0.0; // Score 0 for absence without certificate
   }
 
   // Presente: return calculated total score (clamped 0..20)

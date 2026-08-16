@@ -33,12 +33,14 @@ const mapSOI = (row: any): SOI => ({
   code: row.codigo || normalizeCode(row.nome || 'SOI'),
   active: row.ativo !== false,
   createdAt: row.created_at,
+  professorId: row.professor_id || row.created_by || '',
+  createdBy: row.professor_id || row.created_by || '',
 });
 
 export async function fetchSOIs(client: SupabaseClient): Promise<Result<SOI[]>> {
   const { data, error } = await client
     .from('sois')
-    .select('id, semestre_id, nome, codigo, ativo, created_at')
+    .select('id, semestre_id, nome, codigo, ativo, created_at, professor_id')
     .eq('ativo', true)
     .order('nome');
 

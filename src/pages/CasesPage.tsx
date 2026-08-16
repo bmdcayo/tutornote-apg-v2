@@ -19,8 +19,10 @@ import {
   MapPin,
   Plus,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
+import { ImportCasesModal } from '../components/cases/ImportCasesModal';
 
 export const CasesPage: React.FC = () => {
   const { user, profile } = useAuth();
@@ -42,6 +44,7 @@ export const CasesPage: React.FC = () => {
   } = useApp();
 
   const [showCaseModal, setShowCaseModal] = useState<boolean>(false);
+  const [showImportModal, setShowImportModal] = useState<boolean>(false);
   const [editingCase, setEditingCase] = useState<APGCase | null>(null);
 
   // Form Fields
@@ -71,7 +74,7 @@ export const CasesPage: React.FC = () => {
 
   const scopedClasses = classes.filter(
     (item) =>
-      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (!selectedSemesterId || selectedSemesterId === 'all' || item.semesterId === selectedSemesterId) &&
       (selectedSoiId === 'all' || item.soiId === selectedSoiId)
   );
 
@@ -215,7 +218,7 @@ export const CasesPage: React.FC = () => {
       {/* Page Title & Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight">
+          <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight">
             Módulo de Casos APG
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -255,8 +258,16 @@ export const CasesPage: React.FC = () => {
           </div>
 
           <button
+            onClick={() => setShowImportModal(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-all dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <Upload className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+            <span>Importar Casos (XLSX / CSV)</span>
+          </button>
+
+          <button
             onClick={handleOpenAddModal}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all"
+            className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all"
           >
             <Plus className="h-4 w-4" />
             <span>Novo Caso APG</span>
@@ -267,11 +278,30 @@ export const CasesPage: React.FC = () => {
       {/* Cases List */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {filteredCases.length === 0 ? (
-          <div className="col-span-full rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xs dark:border-slate-800 dark:bg-slate-900">
-            <BookOpen className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600 mb-2" />
-            <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-              Nenhum caso APG foi cadastrado neste banco de dados
+          <div className="col-span-full rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xs dark:border-slate-800 dark:bg-slate-900 flex flex-col items-center justify-center">
+            <BookOpen className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
+            <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 mb-1">
+              Nenhum caso APG foi cadastrado para os filtros selecionados
             </p>
+            <p className="text-xs text-slate-400 mb-4 max-w-md">
+              Cadastre um novo caso manualmente ou utilize a importação em lote para subir múltiplos casos com plano de aula via planilha XLSX ou CSV.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => setShowImportModal(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-all dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <Upload className="h-4 w-4" />
+                <span>Importar Planilha de Casos (XLSX/CSV)</span>
+              </button>
+              <button
+                onClick={handleOpenAddModal}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-4 py-2 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Cadastrar Novo Caso</span>
+              </button>
+            </div>
           </div>
         ) : (
           filteredCases.map((c) => {
@@ -404,7 +434,7 @@ export const CasesPage: React.FC = () => {
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
                 <option value="" disabled>Selecione um SOI...</option>
-                {sois.filter((soi) => !selectedSemesterId || soi.semesterId === selectedSemesterId).map((soi) => (
+                {sois.filter((soi) => !selectedSemesterId || selectedSemesterId === 'all' || soi.semesterId === selectedSemesterId).map((soi) => (
                   <option key={soi.id} value={soi.id}>
                     {soi.name}
                   </option>
@@ -658,6 +688,13 @@ export const CasesPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Import Cases Modal */}
+      <ImportCasesModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={(msg) => setSuccessMessage(msg)}
+      />
     </div>
   );
 };

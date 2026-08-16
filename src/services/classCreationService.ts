@@ -266,6 +266,8 @@ export async function createClassInSupabase(
     soiId: createdTurma.soi_id || soiId,
     yearSemester: semExist.nome || yearSemester || '2026.1',
     responsibleTeacher: profName,
+    professorId: activeUserId,
+    createdBy: activeUserId,
   };
 
   // 6. Consultar public.mesas usando o turma_id (geradas pelo trigger)
@@ -610,6 +612,8 @@ export async function fetchAllClassesAndMesas(client: SupabaseClient): Promise<{
         soiId: t.soi_id || '',
         yearSemester: semesterName,
         responsibleTeacher: profName,
+        professorId: t.professor_id || profObj?.id || '',
+        createdBy: t.professor_id || profObj?.id || '',
       };
     });
 

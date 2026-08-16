@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { ClassGroup, Student, TableAllocation } from '../types';
 import { Badge } from '../components/common/Badge';
 import { SOIFilter } from '../components/common/SOIFilter';
@@ -42,11 +43,13 @@ export const TableCompositionPage: React.FC = () => {
 
   // Filter classes by selected semester
   const filteredClasses = useMemo(() => {
-    return classes.filter(
-      (c) =>
-        (!selectedSemesterId || c.semesterId === selectedSemesterId) &&
-        (selectedSoiId === 'all' || c.soiId === selectedSoiId)
+    const semClasses = classes.filter(
+      (c) => !selectedSemesterId || selectedSemesterId === 'all' || c.semesterId === selectedSemesterId
     );
+    const soiClasses = semClasses.filter(
+      (c) => selectedSoiId === 'all' || !c.soiId || c.soiId === selectedSoiId
+    );
+    return soiClasses.length > 0 ? soiClasses : semClasses.length > 0 ? semClasses : classes;
   }, [classes, selectedSemesterId, selectedSoiId]);
 
   const [selectedClassId, setSelectedClassId] = useState<string>('');
@@ -80,7 +83,38 @@ export const TableCompositionPage: React.FC = () => {
   const [showUnsavedModal, setShowUnsavedModal] = useState<boolean>(false);
   const [pendingTargetMode, setPendingTargetMode] = useState<'u1' | 'u2' | 'compare' | null>(null);
 
+  const { user, profile } = useAuth();
+
   const activeClass = filteredClasses.find((c) => c.id === selectedClassId) || filteredClasses[0];
+
+  const canEditActiveClass = useMemo(() => {
+    if (!activeClass || !profile) return true;
+    const role = (profile.papel || '').toLowerCase().trim();
+    if (role === 'administrador' || role === 'admin') return true;
+    if (role === 'visualizador' || role === 'viewer') return false;
+
+    const currentUserId = profile.id || user?.id;
+    if (activeClass.professorId && currentUserId && activeClass.professorId === currentUserId) return true;
+    if (activeClass.createdBy && currentUserId && activeClass.createdBy === currentUserId) return true;
+
+    if (
+      activeClass.responsibleTeacher &&
+      profile.nome &&
+      activeClass.responsibleTeacher.trim().toLowerCase() === profile.nome.trim().toLowerCase()
+    ) {
+      return true;
+    }
+
+    if (
+      !activeClass.professorId &&
+      !activeClass.createdBy &&
+      (!activeClass.responsibleTeacher || activeClass.responsibleTeacher === 'Docente não identificado')
+    ) {
+      return true;
+    }
+
+    return false;
+  }, [activeClass, profile, user]);
 
   // Derive classStudents from active students in class OR with allocations in class
   const classStudents = useMemo(() => {
@@ -131,8 +165,10 @@ export const TableCompositionPage: React.FC = () => {
       const alloc = tableAllocations.find(
         (a) => a.studentId === student.id && a.classId === selectedClassId && a.unit === currentUnitNum
       );
-      if (alloc) {
+      if (alloc && alloc.groupId) {
         initialDraft[student.id] = alloc.groupId;
+      } else if (student.groupId) {
+        initialDraft[student.id] = student.groupId;
       }
     });
     setDraftAllocations(initialDraft);
@@ -141,6 +177,7 @@ export const TableCompositionPage: React.FC = () => {
 
   // Handle draft changes
   const handleAssignStudent = (studentId: string, groupId: string) => {
+    if (!canEditActiveClass) return;
     setDraftAllocations((prev) => {
       const copy = { ...prev };
       if (groupId === '') {
@@ -157,7 +194,7 @@ export const TableCompositionPage: React.FC = () => {
   };
 
   const handleSaveDraft = async () => {
-    if (activeUnitMode === 'compare' || !hasPendingChanges || isSaving) return;
+    if (!canEditActiveClass || activeUnitMode === 'compare' || !hasPendingChanges || isSaving) return;
     if (!selectedClassId) {
       setSaveError('Selecione uma turma antes de salvar a composição.');
       return;
@@ -347,7 +384,7 @@ export const TableCompositionPage: React.FC = () => {
       {/* Page Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight flex items-center gap-2">
+          <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight flex items-center gap-2">
             <Columns className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             Composição das Mesas
           </h2>
@@ -393,6 +430,16 @@ export const TableCompositionPage: React.FC = () => {
       </div>
 
       {/* Mode Navigation Tabs */}
+      {!canEditActiveClass && activeClass && (
+        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-xs font-medium text-amber-900 shadow-xs dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-300">
+          <ShieldAlert className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div>
+            <strong className="font-bold">Modo Somente Leitura:</strong> Você está visualizando a turma{' '}
+            <span className="font-black text-amber-950 dark:text-amber-200">{activeClass.name}</span>. Apenas o professor criador/responsável (<span className="font-bold">{activeClass.responsibleTeacher}</span>) ou um administrador podem alterar a composição de mesas desta turma.
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-2 shadow-xs dark:border-slate-800 dark:bg-slate-900">
         <div className="flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
           <button

@@ -43,21 +43,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
         {/* Brand Header */}
         <div className="flex items-center justify-between pb-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500 font-bold text-lg text-white shadow-sm">
-              T
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#C20054] font-black text-xl text-white shadow-md">
+              A
             </div>
             <div>
-              <h1 className="text-base font-bold tracking-tight text-white leading-tight">
-                TutorNote APG
+              <h1 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
+                <span className="text-[#C20054]">Afya</span> TutorNote
               </h1>
-              <p className="text-[10px] font-medium text-slate-400">
-                Acompanhamento Longitudinal
+              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                Acompanhamento APG
               </p>
             </div>
           </div>
           <button
             onClick={() => setMobileMenuOpen(false)}
-            className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white lg:hidden"
+            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-zinc-900 dark:hover:text-white lg:hidden"
           >
             <X className="h-5 w-5" />
           </button>
@@ -73,14 +73,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
                 to={item.path}
                 onClick={() => setMobileMenuOpen(false)}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg p-3 text-xs font-medium transition-colors ${
+                  `flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-bold transition-all ${
                     isActive
-                      ? 'bg-blue-600/20 text-blue-400 font-semibold'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-rose-500/10 text-[#C20054] dark:bg-rose-500/20 dark:text-rose-400 shadow-2xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-zinc-900 dark:hover:text-slate-200'
                   }`
                 }
               >
-                <Icon className="h-5 w-5 shrink-0" />
+                <Icon className="h-4.5 w-4.5 shrink-0" />
                 <span>{item.label}</span>
               </NavLink>
             );
@@ -89,16 +89,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
       </div>
 
       {/* Footer Profile Section */}
-      <div className="p-4 border-t border-slate-800 space-y-3">
+      <div className="p-4 border-t border-slate-200 dark:border-zinc-800 space-y-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-900 flex items-center justify-center border border-blue-700 shrink-0 font-bold text-xs text-white shadow-xs">
+          <div className="w-9 h-9 rounded-xl bg-[#C20054] flex items-center justify-center shrink-0 font-bold text-xs text-white shadow-xs">
             {getInitials(profile?.nome)}
           </div>
           <div className="flex-1 overflow-hidden">
-            <p className="text-xs font-semibold text-white truncate">
+            <p className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
               {loading ? 'Carregando...' : profile?.nome || '—'}
             </p>
-            <p className="text-[10px] text-slate-400 truncate">
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
               {profile?.email ? `${profile.email}` : formatRole(profile?.papel)}
             </p>
           </div>
@@ -110,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
             setMobileMenuOpen(false);
             logout();
           }}
-          className="w-full flex items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-2 text-xs font-bold text-rose-300 transition-colors cursor-pointer"
+          className="w-full flex items-center justify-center gap-2 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-3 py-2 text-xs font-bold text-rose-700 dark:text-rose-300 transition-colors cursor-pointer"
         >
           <LogOut className="h-4 w-4" />
           <span>Sair da Conta</span>
@@ -122,7 +122,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
   return (
     <>
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex w-60 shrink-0 bg-[#0F172A] text-white flex-col border-r border-slate-800">
+      <aside className="hidden lg:flex w-60 shrink-0 bg-white text-slate-900 dark:bg-black dark:text-white flex-col border-r border-slate-200 dark:border-zinc-800">
         {content}
       </aside>
 
@@ -130,10 +130,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
-            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs"
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="fixed inset-y-0 left-0 w-64 bg-[#0F172A] text-white shadow-2xl flex flex-col">
+          <aside className="fixed inset-y-0 left-0 w-64 bg-white text-slate-900 dark:bg-black dark:text-white shadow-2xl flex flex-col">
             {content}
           </aside>
         </div>

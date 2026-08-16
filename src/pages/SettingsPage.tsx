@@ -8,6 +8,7 @@ import {
   Building2,
   CheckCircle2,
   Database,
+  Github,
   KeyRound,
   Loader2,
   Mail,
@@ -27,6 +28,8 @@ export const SettingsPage: React.FC = () => {
     updatePassword,
     isDemoMode,
   } = useAuth();
+
+  const isOwnerOrAdmin = profile?.papel === 'administrador' || profile?.email === 'bmdcayo@gmail.com' || isDemoMode;
 
   // Personal profile and password state
   const [profileName, setProfileName] = useState(profile?.nome || '');
@@ -156,7 +159,7 @@ export const SettingsPage: React.FC = () => {
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight">
+        <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight">
           Configurações do Sistema
         </h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -183,7 +186,7 @@ export const SettingsPage: React.FC = () => {
           className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4"
         >
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
-            <UserRound className="h-4 w-4 text-[#1E3A8A] dark:text-blue-400" />
+            <UserRound className="h-4 w-4 text-[#C20054] dark:text-blue-400" />
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 Minhas informações pessoais
@@ -262,7 +265,7 @@ export const SettingsPage: React.FC = () => {
           <button
             type="submit"
             disabled={isSavingProfile || isDemoMode}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#C20054] px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSavingProfile ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -432,7 +435,7 @@ export const SettingsPage: React.FC = () => {
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-[#1E3A8A] dark:text-blue-400" />
+            <Database className="h-4 w-4 text-[#C20054] dark:text-blue-400" />
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">
               Conexão com o Supabase (Servidor / Variáveis de Ambiente)
             </h3>
@@ -478,7 +481,7 @@ export const SettingsPage: React.FC = () => {
             type="button"
             onClick={handleTestSupabaseConnection}
             disabled={isTestingSupabase}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#1E3A8A] px-5 py-2.5 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-[#C20054] px-5 py-2.5 text-xs font-bold text-white hover:bg-blue-900 shadow-xs transition-all disabled:opacity-50"
           >
             {isTestingSupabase ? (
               <Loader2 className="h-4 w-4 animate-spin" />

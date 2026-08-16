@@ -52,8 +52,10 @@ import {
 } from '../services/studentService';
 import {
   deleteCaseInSupabase,
+  deleteEvaluationInSupabase,
   loadSettingsFromSupabase,
   saveCaseInSupabase,
+  saveCasesInSupabaseBatch,
   saveEvaluationInSupabase,
   saveSettingsInSupabase,
 } from '../services/academicService';
@@ -133,6 +135,7 @@ interface AppContextType {
 
   // Actions
   saveEvaluation: (evaluation: Evaluation) => Promise<{ success: boolean; error?: string }>;
+  deleteEvaluation: (studentId: string, unit: number, week: number, caseId?: string) => Promise<{ success: boolean; error?: string }>;
   getStudentCalculatedSummary: (studentId: string) => StudentCalculatedSummary | null;
   getCalculatedSummaries: () => StudentCalculatedSummary[];
   addStudent: (student: Omit<Student, 'id'>, unit1GroupId?: string, unit2GroupId?: string) => void;
@@ -140,6 +143,7 @@ interface AppContextType {
   deleteStudent: (studentId: string) => void;
   importStudents: (newStudents: Omit<Student, 'id'>[]) => void;
   saveAPGCase: (apgCase: APGCase) => Promise<{ success: boolean; error?: string }>;
+  importAPGCases: (casesList: APGCase[]) => Promise<{ success: boolean; count?: number; error?: string }>;
   deleteAPGCase: (caseId: string) => Promise<{ success: boolean; error?: string }>;
   saveClass: (cls: Class) => void;
   saveGroup: (grp: ClassGroup) => void;
@@ -186,7 +190,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [cases, setCases] = useState<APGCase[]>(isDemoMode ? initialAPGCases : []);
   const [evaluations, setEvaluations] = useState<Evaluation[]>(isDemoMode ? initialEvaluations : []);
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
-  const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tutornote_dark_mode');
+      if (saved !== null) return saved === 'true';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
 
   // Class & Table Creation Async States
   const [isCreatingClass, setIsCreatingClass] = useState<boolean>(false);
@@ -269,12 +280,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!client || !isSupabaseEnvConfigured()) return;
 
       try {
-        // 1. Semestres (Apenas ativos)
+        // 1. Semestres (Todos os semestres)
         const { data: semData } = await client
           .from('semestres')
           .select('id, nome, data_inicio, data_fim, ativo')
-          .eq('ativo', true)
-          .order('data_inicio');
+          .order('data_inicio', { ascending: false });
         if (semData && semData.length > 0) {
           const mappedSem = semData.map((s: any) => ({
             id: s.id,
@@ -284,15 +294,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             isCurrent: Boolean(s.ativo),
           }));
           setSemesters(mappedSem);
-          const activeSem = mappedSem.find((s) => s.isCurrent) || mappedSem[0];
-          if (activeSem) {
-            setSelectedSemesterIdState(activeSem.id);
-            setSelectedSemesterState(activeSem.name);
-          }
         } else {
           setSemesters([]);
-          setSelectedSemesterIdState('');
-          setSelectedSemesterState('');
         }
 
         // 2. SOIs, Turmas e Mesas
@@ -385,10 +388,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   crit_3: Number(e.desempenho || 0),
                   crit_4: Number(e.fechamento || 0),
                 },
-                rubricChecks:
-                  e.itens_rubrica && typeof e.itens_rubrica === 'object'
-                    ? e.itens_rubrica
-                    : {},
+                adjustmentScore: Number(e.ajuste || e.pontuacao_ajuste || 0),
+                adjustmentReason: e.motivo_ajuste || e.justificativa_ajuste || '',
                 totalGrossScore: Number(e.nota_bruta || 0),
                 performanceTags: Array.isArray(e.tags) ? e.tags : [],
                 teacherNotes: e.observacao_professor || '',
@@ -615,8 +616,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [cases, evaluations, students, tableAllocations]);
 
   // Global filters
-  const [selectedSemester, setSelectedSemesterState] = useState<string>('');
-  const [selectedSemesterId, setSelectedSemesterIdState] = useState<string>('');
+  const [selectedSemester, setSelectedSemesterState] = useState<string>('Todos os Semestres');
+  const [selectedSemesterId, setSelectedSemesterIdState] = useState<string>('all');
   const [selectedSoiId, setSelectedSoiIdState] = useState<string>('all');
   const [selectedClass, setSelectedClass] = useState<string>('all');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
@@ -626,17 +627,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     if (semesters.length > 0) {
-      if (semesters.length === 1 || !selectedSemesterId || !semesters.some((s) => s.id === selectedSemesterId)) {
-        setSelectedSemesterIdState(semesters[0].id);
-        setSelectedSemesterState(semesters[0].name);
+      if (selectedSemesterId === 'all') return;
+      if (!selectedSemesterId || !semesters.some((s) => s.id === selectedSemesterId)) {
+        setSelectedSemesterIdState('all');
+        setSelectedSemesterState('Todos os Semestres');
       }
     } else {
-      setSelectedSemesterIdState('');
-      setSelectedSemesterState('');
+      setSelectedSemesterIdState('all');
+      setSelectedSemesterState('Todos os Semestres');
     }
   }, [semesters]);
 
   const setSelectedSemester = (semName: string) => {
+    if (semName === 'Todos os Semestres' || semName === 'all' || !semName) {
+      setSelectedSemesterState('Todos os Semestres');
+      setSelectedSemesterIdState('all');
+      return;
+    }
     setSelectedSemesterState(semName);
     const matched = semesters.find((s) => s.name === semName || s.id === semName);
     if (matched) {
@@ -646,14 +653,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const setSelectedSemesterId = (semId: string) => {
-    setSelectedSemesterIdState(semId);
+    if (semId === 'all' || !semId) {
+      setSelectedSemesterIdState('all');
+      setSelectedSemesterState('Todos os Semestres');
+    } else {
+      setSelectedSemesterIdState(semId);
+      const matched = semesters.find((s) => s.id === semId || s.name === semId);
+      if (matched) {
+        setSelectedSemesterState(matched.name);
+      }
+    }
     setSelectedSoiIdState('all');
     setSelectedClass('all');
     setSelectedGroup('all');
-    const matched = semesters.find((s) => s.id === semId || s.name === semId);
-    if (matched) {
-      setSelectedSemesterState(matched.name);
-    }
   };
 
   const setSelectedSoiId = (soiId: string) => {
@@ -693,7 +705,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleDarkMode = () => {
-    setDarkMode((prev) => !prev);
+    setDarkMode((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('tutornote_dark_mode', String(next));
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -830,13 +848,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveEvaluation = async (evaluation: Evaluation): Promise<{ success: boolean; error?: string }> => {
-    const totalScore =
-      evaluation.attendance === 'Atestado' && !evaluation.makeupCompleted
-        ? 0
-        : calculateEvaluationTotalScore(
-            evaluation.criterionScores,
-            settings.baremaCriteria
-          );
+    const totalScore = calculateEvaluationTotalScore(
+      evaluation.criterionScores,
+      settings.baremaCriteria,
+      evaluation.adjustmentScore || 0
+    );
 
     const updatedEval: Evaluation = {
       ...evaluation,
@@ -844,29 +860,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: new Date().toISOString().split('T')[0],
     };
 
-    let persistedEvaluation = updatedEval;
-    const client = getSupabaseClient();
-    if (!isDemoMode) {
-      if (!client || !isSupabaseEnvConfigured()) return { success: false, error: 'Supabase não configurado.' };
-      const result = await saveEvaluationInSupabase(client, updatedEval);
-      if (!result.success || !result.data) return { success: false, error: result.error || 'Não foi possível salvar a avaliação.' };
-      persistedEvaluation = result.data;
-    }
+    // 1. Optimistically update local React state so UI updates instantly
     setEvaluations((prev) => {
       const idx = prev.findIndex((e) => e.id === evaluation.id);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = persistedEvaluation;
+        copy[idx] = updatedEval;
         return copy;
       }
-      const sameCaseIndex = prev.findIndex((e) => e.studentId === persistedEvaluation.studentId && e.caseId === persistedEvaluation.caseId);
+      const sameCaseIndex = prev.findIndex(
+        (e) =>
+          e.studentId === updatedEval.studentId &&
+          (updatedEval.caseId ? e.caseId === updatedEval.caseId : e.week === updatedEval.week)
+      );
       if (sameCaseIndex >= 0) {
         const copy = [...prev];
-        copy[sameCaseIndex] = persistedEvaluation;
+        copy[sameCaseIndex] = updatedEval;
         return copy;
       }
-      return [...prev, persistedEvaluation];
+      return [...prev, updatedEval];
     });
+
+    // 2. Persist to Supabase if configured
+    let persistedEvaluation = updatedEval;
+    const client = getSupabaseClient();
+    if (!isDemoMode && client && isSupabaseEnvConfigured()) {
+      const result = await saveEvaluationInSupabase(client, updatedEval);
+      if (result.success && result.data) {
+        persistedEvaluation = result.data;
+        setEvaluations((prev) =>
+          prev.map((e) =>
+            e.id === updatedEval.id ||
+            (e.studentId === persistedEvaluation.studentId && e.caseId === persistedEvaluation.caseId)
+              ? persistedEvaluation
+              : e
+          )
+        );
+      }
+    }
 
     if (persistedEvaluation.makeupRequired && !persistedEvaluation.makeupCompleted) {
       const studentName = students.find((s) => s.id === persistedEvaluation.studentId)?.name || 'Estudante';
@@ -880,6 +911,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setS08p2ReminderOpen(true);
       addNotification('Composição das mesas da 2ª unidade pendente.');
     }
+    return { success: true };
+  };
+
+  const deleteEvaluation = async (
+    studentId: string,
+    unit: number,
+    week: number,
+    caseId?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    // 1. Optimistically remove from local state
+    setEvaluations((prev) =>
+      prev.filter(
+        (e) =>
+          !(
+            e.studentId === studentId &&
+            (caseId ? e.caseId === caseId : e.week === week)
+          )
+      )
+    );
+
+    // 2. Delete from Supabase if configured
+    const client = getSupabaseClient();
+    if (!isDemoMode && client && isSupabaseEnvConfigured()) {
+      await deleteEvaluationInSupabase(client, studentId, unit, week, caseId);
+    }
+
+    const studentObj = students.find((s) => s.id === studentId);
+    addNotification(`Avaliação da Semana ${week} de ${studentObj?.name || 'estudante'} foi anulada.`);
     return { success: true };
   };
 
@@ -1133,6 +1192,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
     return { success: true };
+  };
+
+  const importAPGCases = async (casesList: APGCase[]): Promise<{ success: boolean; count?: number; error?: string }> => {
+    if (casesList.length === 0) return { success: true, count: 0 };
+    const client = getSupabaseClient();
+    if (!isDemoMode) {
+      if (!client || !isSupabaseEnvConfigured()) return { success: false, error: 'Supabase não configurado.' };
+      const result = await saveCasesInSupabaseBatch(client, casesList);
+      if (!result.success) return { success: false, error: result.error || 'Falha ao importar casos.' };
+      await reloadAPGCases();
+      return { success: true, count: result.data?.count || casesList.length };
+    } else {
+      setCases((prev) => {
+        const copy = [...prev];
+        casesList.forEach((c) => {
+          const idx = copy.findIndex((existing) => existing.id === c.id || (existing.soiId === c.soiId && existing.week === c.week && existing.problemNumber === c.problemNumber));
+          const newCase = { ...c, id: c.id || `case_${Date.now()}_${Math.random().toString(36).substring(2, 7)}` };
+          if (idx >= 0) {
+            copy[idx] = newCase;
+          } else {
+            copy.push(newCase);
+          }
+        });
+        return copy;
+      });
+      return { success: true, count: casesList.length };
+    }
   };
 
   const deleteAPGCase = async (caseId: string): Promise<{ success: boolean; error?: string }> => {
@@ -1470,6 +1556,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         globalSearch,
         setGlobalSearch,
         saveEvaluation,
+        deleteEvaluation,
         getStudentCalculatedSummary,
         getCalculatedSummaries,
         refreshStudents,
@@ -1483,6 +1570,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteStudent,
         importStudents,
         saveAPGCase,
+        importAPGCases,
         deleteAPGCase,
         saveClass,
         saveGroup,

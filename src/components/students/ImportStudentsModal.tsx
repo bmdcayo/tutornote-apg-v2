@@ -48,20 +48,91 @@ export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen
 
   // Helper to resolve Class ID from string (name or id)
   const resolveClassId = (rawName: string): string => {
-    if (!rawName) return classes[0]?.id || 'cls_1';
-    const found = classes.find(
-      (c) => c.name.toLowerCase() === rawName.trim().toLowerCase() || c.id === rawName.trim()
-    );
-    return found ? found.id : classes[0]?.id || 'cls_1';
+    if (!classes || classes.length === 0) return 'cls_1';
+    if (!rawName || !rawName.trim()) return classes[0].id;
+
+    const raw = rawName.trim();
+    const rawLower = raw.toLowerCase();
+
+    // 1. Direct match by ID or exact Name
+    const exact = classes.find((c) => c.id === raw || c.name.toLowerCase() === rawLower);
+    if (exact) return exact.id;
+
+    const normalizeStr = (str: string) =>
+      str
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const normRaw = normalizeStr(raw);
+
+    // Check for explicit turma letter or identifier e.g. "turma m", "m"
+    const turmaLetterMatch = normRaw.match(/\bturma\s+([a-z0-9]+)\b/) || (normRaw.length <= 3 ? normRaw.match(/^([a-z0-9]+)$/) : null);
+    const targetLetter = turmaLetterMatch ? turmaLetterMatch[1] : null;
+
+    if (targetLetter) {
+      const letterMatch = classes.find((c) => {
+        const normC = normalizeStr(c.name);
+        const cLetterMatch = normC.match(/\bturma\s+([a-z0-9]+)\b/);
+        if (cLetterMatch && cLetterMatch[1] === targetLetter) return true;
+        const tokens = normC.split(' ');
+        return tokens.includes(targetLetter);
+      });
+      if (letterMatch) return letterMatch.id;
+    }
+
+    // 2. Token matching ignoring boilerplate words
+    const genericWords = new Set(['turma', 'soi', 'modulo', 'de', 'do', 'da', 'grupo', 'mesa', 'classe']);
+    const rawTokens = normRaw.split(' ').filter((t) => t && !genericWords.has(t));
+
+    if (rawTokens.length > 0) {
+      // Find class that matches all raw tokens
+      const tokenMatchedClass = classes.find((c) => {
+        const normC = normalizeStr(c.name);
+        return rawTokens.every((tok) => normC.includes(tok));
+      });
+      if (tokenMatchedClass) return tokenMatchedClass.id;
+
+      // Match main token
+      const mainToken = rawTokens[0];
+      const partialMatched = classes.find((c) => {
+        const normC = normalizeStr(c.name);
+        const cTokens = normC.split(' ');
+        return cTokens.includes(mainToken);
+      });
+      if (partialMatched) return partialMatched.id;
+    }
+
+    return classes[0].id;
   };
 
-  // Helper to resolve Group ID from string (name or id)
-  const resolveGroupId = (rawName: string): string => {
-    if (!rawName) return groups[0]?.id || 'grp_1';
-    const found = groups.find(
-      (g) => g.name.toLowerCase() === rawName.trim().toLowerCase() || g.id === rawName.trim()
-    );
-    return found ? found.id : groups[0]?.id || 'grp_1';
+  // Helper to resolve Group ID from string (name or id) scoped to classId
+  const resolveGroupId = (rawName: string, classId: string): string => {
+    const classGroups = groups.filter((g) => g.classId === classId);
+    if (!classGroups || classGroups.length === 0) {
+      const fallbackGroup = groups.find((g) => g.classId === classId) || groups[0];
+      return fallbackGroup?.id || 'grp_1';
+    }
+    if (!rawName || !rawName.trim()) return classGroups[0].id;
+
+    const raw = rawName.trim().toLowerCase();
+    const found = classGroups.find((g) => g.id === raw || g.name.toLowerCase() === raw);
+    if (found) return found.id;
+
+    const numMatch = raw.match(/\d+/);
+    if (numMatch) {
+      const num = numMatch[0];
+      const byNum = classGroups.find((g) => {
+        const gNumMatch = g.name.match(/\d+/);
+        return gNumMatch && gNumMatch[0] === num;
+      });
+      if (byNum) return byNum.id;
+    }
+
+    return classGroups[0].id;
   };
 
   // Helper to validate a set of rows
@@ -111,13 +182,16 @@ export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen
         warnings.push('Matrícula já existente no sistema (não será sobrescrita silenciosamente)');
       }
 
+      const resolvedClassId = resolveClassId(r.turmaRaw);
+      const resolvedGroupId = resolveGroupId(r.grupoRaw, resolvedClassId);
+
       return {
         ...r,
         name: cleanName,
         enrollment: cleanEnrollment,
         email: cleanEmail,
-        classId: resolveClassId(r.turmaRaw),
-        groupId: resolveGroupId(r.grupoRaw),
+        classId: resolvedClassId,
+        groupId: resolvedGroupId,
         errors,
         warnings,
         isDuplicateInFile,
@@ -283,8 +357,14 @@ export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen
     }));
 
     setIsProcessing(true);
-    await importStudents(studentsToImport);
+    const res = await importStudents(studentsToImport);
     setIsProcessing(false);
+
+    if (!res?.success) {
+      alert(res?.error || 'Erro ao importar estudantes. Verifique os dados e tente novamente.');
+      return;
+    }
+
     setHasSubmitted(true);
 
     setTimeout(() => {
@@ -547,7 +627,7 @@ export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen
                             >
                               {classes
                                 .filter((c) =>
-                                  ((!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+                                  ((!selectedSemesterId || selectedSemesterId === 'all' || c.semesterId === selectedSemesterId) &&
                                     (selectedSoiId === 'all' || c.soiId === selectedSoiId)) ||
                                   c.id === row.classId
                                 )
@@ -569,11 +649,13 @@ export const ImportStudentsModal: React.FC<ImportStudentsModalProps> = ({ isOpen
                               }}
                               className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                             >
-                              {groups.map((g) => (
-                                <option key={g.id} value={g.id}>
-                                  {g.name}
-                                </option>
-                              ))}
+                              {groups
+                                .filter((g) => g.classId === row.classId)
+                                .map((g) => (
+                                  <option key={g.id} value={g.id}>
+                                    {g.name}
+                                  </option>
+                                ))}
                             </select>
                           </td>
 

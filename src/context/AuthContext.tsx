@@ -97,11 +97,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchProfileFromDatabase = async (
     userId: string,
-    userEmail?: string
+    userEmail?: string,
+    userMetadata?: Record<string, any>
   ): Promise<{ profile: UserProfile | null; errorMsg: string | null }> => {
+    // 1. Check local storage cache for existing profile
+    let cachedProfile: UserProfile | null = null;
+    try {
+      const raw = localStorage.getItem(`tutornote_cached_profile_${userId}`);
+      if (raw) {
+        cachedProfile = JSON.parse(raw);
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+
+    // Default fallback constructed from user metadata, email, and local cache
+    const fallbackProfile: UserProfile = {
+      id: userId,
+      nome:
+        cachedProfile?.nome ||
+        userMetadata?.full_name ||
+        userMetadata?.name ||
+        userMetadata?.nome ||
+        userEmail?.split('@')[0] ||
+        'Professor',
+      email: cachedProfile?.email || userEmail || '',
+      papel: cachedProfile?.papel || userMetadata?.role || userMetadata?.papel || 'professor',
+      instituicao:
+        cachedProfile?.instituicao ||
+        userMetadata?.institution ||
+        userMetadata?.instituicao ||
+        'Faculdade de Medicina',
+      ativo: cachedProfile?.ativo !== undefined ? cachedProfile.ativo : true,
+    };
+
     const client = getSupabaseClient();
     if (!client) {
-      return { profile: null, errorMsg: 'Cliente Supabase indisponível.' };
+      return { profile: fallbackProfile, errorMsg: null };
     }
 
     try {
@@ -112,20 +144,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (dbError) {
-        console.error('[Profile Fetch DB Error]', dbError.message);
-        return { profile: null, errorMsg: `Erro ao consultar perfil: ${dbError.message}` };
+        console.warn('[Profile Fetch Notice] Using fallback user profile:', dbError.message);
+        try {
+          localStorage.setItem(`tutornote_cached_profile_${userId}`, JSON.stringify(fallbackProfile));
+        } catch {}
+        return { profile: fallbackProfile, errorMsg: null };
       }
 
       if (!data) {
-        return { profile: null, errorMsg: 'Perfil não cadastrado no banco de dados.' };
+        // Auto-provision profile row in database if permitted
+        try {
+          await client.from('profiles').upsert({
+            id: userId,
+            nome: fallbackProfile.nome,
+            email: fallbackProfile.email,
+            papel: fallbackProfile.papel,
+            instituicao: fallbackProfile.instituicao,
+            ativo: true,
+          });
+        } catch {
+          // Non-blocking upsert error
+        }
+        try {
+          localStorage.setItem(`tutornote_cached_profile_${userId}`, JSON.stringify(fallbackProfile));
+        } catch {}
+        return { profile: fallbackProfile, errorMsg: null };
       }
 
       const mappedProfile: UserProfile = {
         id: data.id || userId,
-        nome: data.nome || data.name || data.full_name || userEmail?.split('@')[0] || 'Usuário',
-        email: data.email || userEmail || '',
-        papel: data.papel || data.role || 'professor',
-        instituicao: data.instituicao || data.institution || 'Faculdade de Medicina',
+        nome: data.nome || data.name || data.full_name || fallbackProfile.nome,
+        email: data.email || userEmail || fallbackProfile.email,
+        papel: data.papel || data.role || fallbackProfile.papel,
+        instituicao: data.instituicao || data.institution || fallbackProfile.instituicao,
         ativo:
           data.ativo !== undefined
             ? Boolean(data.ativo)
@@ -134,10 +185,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             : true,
       };
 
+      try {
+        localStorage.setItem(`tutornote_cached_profile_${userId}`, JSON.stringify(mappedProfile));
+      } catch {}
+
       return { profile: mappedProfile, errorMsg: null };
     } catch (err: any) {
-      console.error('[Profile Fetch Exception]', err);
-      return { profile: null, errorMsg: 'Falha na comunicação ao carregar o perfil.' };
+      console.warn('[Profile Fetch Notice] Network issue or exception, using fallback profile:', err?.message || err);
+      try {
+        localStorage.setItem(`tutornote_cached_profile_${userId}`, JSON.stringify(fallbackProfile));
+      } catch {}
+      return { profile: fallbackProfile, errorMsg: null };
     }
   };
 
@@ -165,7 +223,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     const { profile: dbProfile, errorMsg } = await fetchProfileFromDatabase(
       session.user.id,
-      session.user.email
+      session.user.email,
+      session.user.user_metadata
     );
 
     setProfile(dbProfile);
@@ -240,7 +299,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(authData.session.user);
           const { profile: dbProfile, errorMsg } = await fetchProfileFromDatabase(
             authData.session.user.id,
-            authData.session.user.email
+            authData.session.user.email,
+            authData.session.user.user_metadata
           );
           setProfile(dbProfile);
           setError(errorMsg);
@@ -277,7 +337,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setLoading(true);
               const { profile: dbProfile, errorMsg } = await fetchProfileFromDatabase(
                 newSession.user.id,
-                newSession.user.email
+                newSession.user.email,
+                newSession.user.user_metadata
               );
               setProfile(dbProfile);
               setError(errorMsg);
@@ -338,7 +399,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(true);
         const { profile: dbProfile, errorMsg } = await fetchProfileFromDatabase(
           data.session.user.id,
-          data.session.user.email
+          data.session.user.email,
+          data.session.user.user_metadata
         );
         setProfile(dbProfile);
         setError(errorMsg);
@@ -404,6 +466,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (signUpError) {
         const rawMessage = signUpError.message?.toLowerCase() || '';
+        if (rawMessage.includes('rate limit') || rawMessage.includes('rate_limit')) {
+          return {
+            success: false,
+            error:
+              'O limite de cadastros por hora do servidor de e-mail foi atingido (Email Rate Limit). Por favor, aguarde cerca de 30 a 60 minutos para tentar cadastrar novamente, ou ajuste as configurações de SMTP/Rate Limit no painel do Supabase.',
+          };
+        }
         if (rawMessage.includes('already registered') || rawMessage.includes('already exists')) {
           return {
             success: false,
@@ -450,7 +519,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(true);
         const { profile: dbProfile, errorMsg } = await fetchProfileFromDatabase(
           data.session.user.id,
-          data.session.user.email
+          data.session.user.email,
+          data.session.user.user_metadata
         );
         setProfile(dbProfile);
         setError(errorMsg);
@@ -551,7 +621,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const { profile: refreshedProfile, errorMsg } = await fetchProfileFromDatabase(
         activeUser.id,
-        activeUser.email
+        activeUser.email,
+        activeUser.user_metadata
       );
       setProfile(refreshedProfile);
       setError(errorMsg);

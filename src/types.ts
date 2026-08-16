@@ -96,6 +96,8 @@ export interface Class {
   soiId?: string;
   yearSemester: string; // e.g. "2026.1"
   responsibleTeacher: string;
+  professorId?: string;
+  createdBy?: string;
 }
 
 export interface SOI {
@@ -105,6 +107,8 @@ export interface SOI {
   code: string;
   active: boolean;
   createdAt?: string;
+  professorId?: string;
+  createdBy?: string;
 }
 
 export interface Semester {
@@ -155,7 +159,9 @@ export interface Evaluation {
   role: SessionRole;
   attendance: AttendanceStatus;
   criterionScores: Record<string, number>; // criterionId -> score (0..5)
-  rubricChecks?: Record<string, boolean>; // rubricItemId -> checked
+  checkedCriteria?: Record<string, number[]>; // criterionId -> array of checked item indices
+  adjustmentScore?: number; // Ajuste manual docente (+/-), default 0.0
+  adjustmentReason?: string; // Justificativa pedagógica opcional do ajuste
   totalGrossScore: number; // Max 20.0
   performanceTags: string[];
   teacherNotes: string;
@@ -166,15 +172,6 @@ export interface Evaluation {
   makeupCompleted?: boolean;
   originalAbsenceDate?: string;
   makeupDate?: string;
-}
-
-export interface CaseClassTableAssignment {
-  id?: string;
-  caseId: string;
-  classId: string;
-  groupId: string;
-  createdAt?: string;
-  updatedAt?: string;
 }
 
 export interface AppSettings {

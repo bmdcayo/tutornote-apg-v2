@@ -1,1 +1,78 @@
 @import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-afya: #C20054;
+  --color-afya-hover: #A10045;
+  --color-afya-light: #FDF2F7;
+
+  /* Remap indigo to Afya Fúcsia palette */
+  --color-indigo-50: #FDF2F7;
+  --color-indigo-100: #FCE7F1;
+  --color-indigo-200: #F8CFE2;
+  --color-indigo-300: #F2A7C9;
+  --color-indigo-400: #E66DA4;
+  --color-indigo-500: #D8327E;
+  --color-indigo-600: #C20054;
+  --color-indigo-700: #A10045;
+  --color-indigo-800: #85033B;
+  --color-indigo-900: #700735;
+  --color-indigo-950: #42001C;
+
+  /* Remap blue to Afya Fúcsia palette */
+  --color-blue-50: #FDF2F7;
+  --color-blue-100: #FCE7F1;
+  --color-blue-200: #F8CFE2;
+  --color-blue-300: #F2A7C9;
+  --color-blue-400: #E66DA4;
+  --color-blue-500: #C20054;
+  --color-blue-600: #C20054;
+  --color-blue-700: #A10045;
+  --color-blue-800: #85033B;
+  --color-blue-900: #700735;
+  --color-blue-950: #42001C;
+
+  /* Remap amber to Afya Fúcsia accents where applicable */
+  --color-amber-500: #C20054;
+  --color-amber-600: #A10045;
+
+  /* Dark mode background overrides: Replace slate dark blues with rich pure blacks */
+  --color-slate-900: #0D0D10;
+  --color-slate-950: #000000;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background-color: #ffffff;
+  color: #0f172a;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+.dark body {
+  background-color: #000000;
+  color: #f8fafc;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(194, 0, 84, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(194, 0, 84, 0.5);
+}
+

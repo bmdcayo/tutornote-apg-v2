@@ -64,7 +64,7 @@ export const DashboardPage: React.FC = () => {
 
   const scopedClasses = classes.filter(
     (item) =>
-      (!selectedSemesterId || item.semesterId === selectedSemesterId) &&
+      (!selectedSemesterId || selectedSemesterId === 'all' || item.semesterId === selectedSemesterId) &&
       (selectedSoiId === 'all' || item.soiId === selectedSoiId)
   );
   const scopedClassIds = new Set(scopedClasses.map((item) => item.id));
@@ -196,7 +196,7 @@ export const DashboardPage: React.FC = () => {
       {/* Title & Actions Bar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight">
+          <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight">
             Painel de Monitoramento
           </h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm">
@@ -264,7 +264,7 @@ export const DashboardPage: React.FC = () => {
             </Link>
             <Link
               to="/avaliacoes"
-              className="bg-[#1E3A8A] hover:bg-blue-900 text-white text-sm px-4 py-2 rounded-lg font-medium shadow-sm transition-all"
+              className="bg-[#C20054] hover:bg-blue-900 text-white text-sm px-4 py-2 rounded-lg font-medium shadow-sm transition-all"
             >
               Nova Avaliação
             </Link>

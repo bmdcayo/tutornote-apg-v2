@@ -125,42 +125,42 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 p-4 font-sans text-slate-100">
+    <div className="min-h-screen w-full flex items-center justify-center bg-white dark:bg-black p-4 font-sans text-slate-800 dark:text-slate-100 transition-colors">
       <div className="w-full max-w-md space-y-6">
         {/* Header Branding */}
         <div className="text-center space-y-3">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#1E3A8A] text-white shadow-xl ring-1 ring-white/10">
-            <BookOpen className="h-8 w-8 text-amber-400" />
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#C20054] text-white shadow-xl ring-4 ring-rose-500/20">
+            <BookOpen className="h-8 w-8 text-white" />
           </div>
           <div>
-            <span className="inline-block rounded-full bg-blue-500/10 px-3 py-1 text-[11px] font-bold text-blue-400 uppercase tracking-wider border border-blue-500/20">
+            <span className="inline-block rounded-full bg-rose-500/10 px-3 py-1 text-[11px] font-extrabold text-[#C20054] dark:text-rose-400 uppercase tracking-wider border border-rose-500/20">
               Faculdade de Medicina — APG
             </span>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">
-              TutorNote APG
+            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+              <span className="text-[#C20054]">Afya</span> TutorNote
             </h1>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
               Acesso exclusivo para docentes, tutores e avaliadores acadêmicos
             </p>
           </div>
         </div>
 
         {/* Authentication Card */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-8 shadow-2xl backdrop-blur-md space-y-5">
-          <div className="flex items-center gap-2 border-b border-slate-800/80 pb-3">
-            <Lock className="h-4 w-4 text-amber-400" />
-            <h2 className="text-sm font-bold text-slate-200">Autenticação do Sistema</h2>
+        <div className="rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-8 shadow-xl space-y-5">
+          <div className="flex items-center gap-2 border-b border-slate-100 dark:border-zinc-800 pb-3">
+            <Lock className="h-4 w-4 text-[#C20054]" />
+            <h2 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">Autenticação do Sistema</h2>
           </div>
 
           {!isDemoMode && (
-            <div className="grid grid-cols-2 rounded-xl border border-slate-800 bg-slate-900/70 p-1">
+            <div className="grid grid-cols-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-black p-1">
               <button
                 type="button"
                 onClick={() => changeAuthMode('login')}
-                className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-bold transition-colors ${
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-extrabold transition-all ${
                   authMode === 'login'
-                    ? 'bg-[#1E3A8A] text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-[#C20054] text-white shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
                 <LogIn className="h-3.5 w-3.5" />
@@ -169,10 +169,10 @@ export const LoginPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => changeAuthMode('register')}
-                className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-bold transition-colors ${
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-extrabold transition-all ${
                   authMode === 'register'
-                    ? 'bg-[#1E3A8A] text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-[#C20054] text-white shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
                 <UserRoundPlus className="h-3.5 w-3.5" />
@@ -182,8 +182,18 @@ export const LoginPage: React.FC = () => {
           )}
 
           {errorMsg && (
-            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300 font-medium">
-              {errorMsg}
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300 font-medium space-y-2">
+              <p>{errorMsg}</p>
+              {(errorMsg.toLowerCase().includes('limite') || errorMsg.toLowerCase().includes('rate limit')) && (
+                <div className="mt-2 rounded-lg bg-slate-900/80 p-2.5 text-[11px] text-slate-300 border border-slate-700/60 space-y-1">
+                  <p className="font-semibold text-amber-400">💡 Como solucionar / Aumentar o limite no Supabase:</p>
+                  <ol className="list-disc pl-4 space-y-0.5 text-slate-300">
+                    <li>O servidor padrão do Supabase limita a 3 ou 4 e-mails de confirmação por hora.</li>
+                    <li><strong>Para ambiente de testes/produção:</strong> Acesse seu painel no <em>Supabase Dashboard &gt; Authentication &gt; Providers &gt; Email</em> e desative <em>"Confirm email"</em> para permitir cadastros instantâneos sem envio de e-mail.</li>
+                    <li>Ou configure um provedor SMTP próprio (Resend, SendGrid, Mailgun) em <em>Authentication &gt; Email Settings</em> para liberar envios ilimitados.</li>
+                  </ol>
+                </div>
+              )}
             </div>
           )}
 
@@ -246,7 +256,7 @@ export const LoginPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white font-bold text-xs py-3 px-4 shadow-lg transition-all disabled:opacity-50 cursor-pointer"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#C20054] hover:bg-blue-800 text-white font-bold text-xs py-3 px-4 shadow-lg transition-all disabled:opacity-50 cursor-pointer"
               >
                 <LogIn className="h-4 w-4 text-amber-400" />
                 <span>{loading ? 'Autenticando...' : 'Entrar no Sistema'}</span>
@@ -354,7 +364,7 @@ export const LoginPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white font-bold text-xs py-3 px-4 shadow-lg transition-all disabled:opacity-50 cursor-pointer"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#C20054] hover:bg-blue-800 text-white font-bold text-xs py-3 px-4 shadow-lg transition-all disabled:opacity-50 cursor-pointer"
               >
                 <UserRoundPlus className="h-4 w-4 text-amber-400" />
                 <span>{loading ? 'Criando conta...' : 'Criar conta de professor'}</span>

@@ -46,7 +46,7 @@ export const caseMatchesCatalogScope = (
   sois: SOI[]
 ): boolean => {
   const caseSemesterId = getCaseSemesterId(apgCase, sois);
-  if (selectedSemesterId && caseSemesterId && caseSemesterId !== selectedSemesterId) {
+  if (selectedSemesterId && selectedSemesterId !== 'all' && caseSemesterId && caseSemesterId !== selectedSemesterId) {
     return false;
   }
   return caseMatchesSOI(apgCase, selectedSoiId, sois);

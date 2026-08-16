@@ -17,6 +17,7 @@ import {
   MoreVertical,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Trash2,
   UserCheck,
@@ -67,6 +68,7 @@ export const StudentsPage: React.FC = () => {
     deactivateStudentFull,
     reactivateStudentFull,
     deleteStudentDefinitely,
+    deleteEvaluation,
   } = useApp();
 
   // Selected student for detail modal
@@ -148,11 +150,14 @@ export const StudentsPage: React.FC = () => {
     }, 4000);
   };
 
-  const semesterClasses = classes.filter(
-    (c) =>
-      (!selectedSemesterId || c.semesterId === selectedSemesterId) &&
-      (selectedSoiId === 'all' || c.soiId === selectedSoiId)
+  const allSemesterClasses = classes.filter(
+    (c) => !selectedSemesterId || selectedSemesterId === 'all' || c.semesterId === selectedSemesterId
   );
+  const soiClasses = allSemesterClasses.filter(
+    (c) => selectedSoiId === 'all' || !c.soiId || c.soiId === selectedSoiId
+  );
+  const semesterClasses =
+    soiClasses.length > 0 ? soiClasses : allSemesterClasses.length > 0 ? allSemesterClasses : classes;
   const semesterClassIds = new Set(semesterClasses.map((c) => c.id));
 
   // Filter students: Search -> Turma -> Status -> Unidade -> Mesa
@@ -169,7 +174,7 @@ export const StudentsPage: React.FC = () => {
     // 2. Turma & Semester
     if (selectedClass !== 'all') {
       if (s.classId !== selectedClass) return false;
-    } else if (selectedSemesterId || selectedSoiId !== 'all') {
+    } else if ((selectedSemesterId && selectedSemesterId !== 'all') || selectedSoiId !== 'all') {
       // Um aluno ainda sem alocação deve permanecer visível para que o
       // professor consiga atribuir sua turma e suas mesas pela própria tela.
       if (s.classId && !semesterClassIds.has(s.classId)) return false;
@@ -509,7 +514,7 @@ export const StudentsPage: React.FC = () => {
       {/* Header & Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#1E3A8A] dark:text-blue-400 tracking-tight">
+          <h2 className="text-2xl font-bold text-[#C20054] dark:text-blue-400 tracking-tight">
             Módulo de Alunos
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -522,13 +527,13 @@ export const StudentsPage: React.FC = () => {
             onClick={() => setShowImportModal(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 shadow-xs transition-all"
           >
-            <FileSpreadsheet className="h-4 w-4 text-[#1E3A8A] dark:text-blue-400" />
+            <FileSpreadsheet className="h-4 w-4 text-[#C20054] dark:text-blue-400" />
             <span>Importar Alunos (XLSX / CSV)</span>
           </button>
 
           <button
             onClick={handleOpenAddModal}
-            className="inline-flex items-center gap-2 rounded-lg bg-[#1E3A8A] px-4 py-2 text-sm font-medium text-white hover:bg-blue-900 shadow-sm transition-all"
+            className="inline-flex items-center gap-2 rounded-lg bg-[#C20054] px-4 py-2 text-sm font-medium text-white hover:bg-blue-900 shadow-sm transition-all"
           >
             <Plus className="h-4 w-4" />
             <span>Cadastrar Novo Aluno</span>
@@ -1009,7 +1014,7 @@ export const StudentsPage: React.FC = () => {
                   {(showAllSemestersForTableModal
                     ? classes
                     : classes.filter((c) =>
-                        ((!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+                        ((!selectedSemesterId || selectedSemesterId === 'all' || c.semesterId === selectedSemesterId) &&
                           (selectedSoiId === 'all' || c.soiId === selectedSoiId)) ||
                         c.id === tableClassId
                       )
@@ -1497,14 +1502,29 @@ export const StudentsPage: React.FC = () => {
                     className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 p-2.5 text-xs dark:border-slate-800 dark:bg-slate-800"
                   >
                     <div>
-                      <span className="font-bold">Semana {ev.week}</span> • Papel: {ev.role} •
+                      <span className="font-bold">Semana {ev.week}</span> • Papel: {ev.role} •{' '}
                       Presença: {ev.attendance}
                     </div>
-                    <span className="font-bold text-indigo-900 dark:text-indigo-300">
-                      {ev.attendance === 'Presente'
-                        ? `${ev.totalGrossScore.toFixed(1)} / 20.0`
-                        : ev.attendance}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-indigo-900 dark:text-indigo-300">
+                        {ev.attendance === 'Presente'
+                          ? `${ev.totalGrossScore.toFixed(1)} / 20.0`
+                          : ev.attendance}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Deseja realmente anular a avaliação da Semana ${ev.week}?`)) {
+                            void deleteEvaluation(ev.studentId, ev.unit, ev.week, ev.caseId);
+                          }
+                        }}
+                        className="flex items-center gap-1 rounded-md border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/80 px-2 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900 transition-colors"
+                        title="Anular avaliação desta semana"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        <span>Anular</span>
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1595,7 +1615,7 @@ export const StudentsPage: React.FC = () => {
                 {(showAllSemestersForAddModal
                   ? classes
                   : classes.filter((c) =>
-                      (!selectedSemesterId || c.semesterId === selectedSemesterId) &&
+                      (!selectedSemesterId || selectedSemesterId === 'all' || c.semesterId === selectedSemesterId) &&
                       (selectedSoiId === 'all' || c.soiId === selectedSoiId)
                     )
                 ).map((c) => (
