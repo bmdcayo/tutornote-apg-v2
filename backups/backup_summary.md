@@ -1,11 +1,11 @@
 ### 📦 Relatório do Backup Automático
-- **ID do Backup:** `tutornote_backup_2026-08-21_18-01-13`
-- **Data/Hora:** 21/08/2026, 15:01:13 (Horário de Brasília)
+- **ID do Backup:** `tutornote_backup_2026-08-21_19-12-38`
+- **Data/Hora:** 21/08/2026, 16:12:38 (Horário de Brasília)
 - **Total de Tabelas Processadas:** 13
 - **Total de Registros Salvos:** 1961
 - **Arquivos Gerados:**
-  - `backups/tutornote_backup_2026-08-21_18-01-13.json` (1548.8 KB)
-  - `backups/tutornote_backup_2026-08-21_18-01-13.sql` (1226.0 KB)
+  - `backups/tutornote_backup_2026-08-21_19-12-38.json` (1548.8 KB)
+  - `backups/tutornote_backup_2026-08-21_19-12-38.sql` (1226.0 KB)
 
 | Tabela | Registros | Status |
 | :--- | :---: | :--- |
