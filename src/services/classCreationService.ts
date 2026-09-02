@@ -139,8 +139,8 @@ export async function createClassInSupabase(
     if (!authErr && authData?.user?.id) {
       activeUserId = authData.user.id;
     }
-  } catch (err) {
-    console.warn('[Supabase Auth Check Warning]', err);
+  } catch {
+    // Ignore auth check warning
   }
 
   if (!activeUserId) {
@@ -152,17 +152,13 @@ export async function createClassInSupabase(
 
   // 2. Confirmar existência do perfil do professor em public.profiles (não bloqueante)
   try {
-    const { data: profileData } = await client
+    await client
       .from('profiles')
       .select('id')
       .eq('id', activeUserId)
       .maybeSingle();
-
-    if (!profileData) {
-      console.warn('[Supabase Profile Check Warning] Perfil não encontrado para ID:', activeUserId);
-    }
-  } catch (pErr) {
-    console.warn('[Supabase Profile Check Exception]', pErr);
+  } catch {
+    // Ignore profile check warning
   }
 
   // 3. Validar semestre_id
@@ -254,8 +250,8 @@ export async function createClassInSupabase(
     if (profData?.nome) {
       profName = profData.nome;
     }
-  } catch (pErr) {
-    console.warn('[Supabase Fetch Professor Profile Warning]', pErr);
+  } catch {
+    // Ignore fetch profile error
   }
 
   // 5. Mapear turma criada
@@ -381,38 +377,38 @@ export async function fetchClassLinkedCounts(
     if (alocs) {
       alunosCount = new Set(alocs.map((a: any) => a.aluno_id).filter(Boolean)).size;
     }
-  } catch (err) {
-    console.warn('[Counts Check Alocações Error]', err);
+  } catch {
+    // Ignore counts error
   }
 
   try {
-    const { count: cMesas } = await client
+    const { count: cMesas, error } = await client
       .from('mesas')
       .select('*', { count: 'exact', head: true })
       .eq('turma_id', classId);
-    mesasCount = cMesas || 0;
-  } catch (err) {
-    console.warn('[Counts Check Mesas Error]', err);
+    if (!error && cMesas !== null) mesasCount = cMesas;
+  } catch {
+    // Ignore counts error
   }
 
   try {
-    const { count: cCasos } = await client
+    const { count: cCasos, error } = await client
       .from('casos_apg')
       .select('*', { count: 'exact', head: true })
       .eq('turma_id', classId);
-    casosCount = cCasos || 0;
-  } catch (err) {
-    console.warn('[Counts Check Casos Error]', err);
+    if (!error && cCasos !== null) casosCount = cCasos;
+  } catch {
+    // Ignore counts error
   }
 
   try {
-    const { count: cEvals } = await client
+    const { count: cEvals, error } = await client
       .from('avaliacoes')
       .select('*', { count: 'exact', head: true })
       .eq('turma_id', classId);
-    avaliacoesCount = cEvals || 0;
-  } catch (err) {
-    console.warn('[Counts Check Avaliacoes Error]', err);
+    if (!error && cEvals !== null) avaliacoesCount = cEvals;
+  } catch {
+    // Ignore counts error
   }
 
   // As 3 mesas automáticas não são consideradas impedimento para excluir uma turma vazia

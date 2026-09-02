@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth, getInitials, formatRole } from '../../context/AuthContext';
+import { AfyaSalvadorLogo } from '../../utils/afyaLogo';
 
 interface SidebarProps {
   mobileMenuOpen: boolean;
@@ -42,17 +43,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileMenuOpen, setMobileMenuO
       <div className="p-5">
         {/* Brand Header */}
         <div className="flex items-center justify-between pb-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#C20054] font-black text-xl text-white shadow-md">
-              A
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center bg-white dark:bg-zinc-900 p-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 shadow-xs w-fit">
+              <AfyaSalvadorLogo className="h-6 w-auto" />
             </div>
-            <div>
-              <h1 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
-                <span className="text-[#C20054]">Afya</span> TutorNote
-              </h1>
-              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                Acompanhamento APG
-              </p>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-900 dark:text-white">
+                TutorNote APG
+              </span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-[#C20054] bg-pink-50 dark:bg-pink-950/40 px-1.5 py-0.5 rounded border border-pink-200 dark:border-pink-900">
+                Medicina
+              </span>
             </div>
           </div>
           <button

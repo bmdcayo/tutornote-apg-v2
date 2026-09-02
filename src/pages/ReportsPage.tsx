@@ -18,6 +18,12 @@ import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import { calculateWeeklyAverage, formatGrade } from '../services/calculationService';
 import { StudentCalculatedSummary, Evaluation, Student, APGCase } from '../types';
+import {
+  AFYA_SALVADOR_LOGO_JPG_BASE64,
+  AFYA_SALVADOR_LOGO_MAGENTA_BASE64,
+  AfyaSalvadorLogo,
+  AFYA_MAGENTA,
+} from '../utils/afyaLogo';
 
 export const ReportsPage: React.FC = () => {
   const {
@@ -37,7 +43,9 @@ export const ReportsPage: React.FC = () => {
     setSelectedUnit,
     selectedSemester,
     getCalculatedSummaries,
+    getStudentCalculatedSummary,
     getStudentTableName,
+    isStudentInSelectedTable,
   } = useApp();
 
   // Active view tab (1. Tipo de relatório)
@@ -63,10 +71,35 @@ export const ReportsPage: React.FC = () => {
       (selectedSoiId === 'all' || item.soiId === selectedSoiId)
   );
   const scopedClassIds = new Set(scopedClasses.map((item) => item.id));
-  const studentSummaries = getCalculatedSummaries().filter((summary) => {
-    const student = students.find((item) => item.id === summary.studentId);
-    return Boolean(student && scopedClassIds.has(student.classId));
+
+  // Determine eligible students based on the selected academic scope
+  const targetStudents = students.filter((student) => {
+    // Check semester / SOI match if scopedClasses are defined
+    if (scopedClassIds.size > 0 && !scopedClassIds.has(student.classId)) {
+      const stClass = classes.find((c) => c.id === student.classId);
+      if (stClass && (
+        (selectedSemesterId && selectedSemesterId !== 'all' && stClass.semesterId !== selectedSemesterId) ||
+        (selectedSoiId !== 'all' && stClass.soiId !== selectedSoiId)
+      )) {
+        return false;
+      }
+    }
+    // Check class filter on Reports page
+    if (selectedClass !== 'all' && student.classId !== selectedClass) {
+      return false;
+    }
+    // Check table filter on Reports page
+    if (selectedUnit !== 'all' && selectedGroup !== 'all') {
+      if (!isStudentInSelectedTable(student.id, selectedUnit, selectedGroup)) {
+        return false;
+      }
+    }
+    return true;
   });
+
+  const studentSummaries: StudentCalculatedSummary[] = targetStudents
+    .map((s) => getStudentCalculatedSummary(s.id))
+    .filter((sum): sum is StudentCalculatedSummary => sum !== null);
 
   // Helper to format filenames with mandatory components:
   // relatorio_<turma>_<unidade>[_<mesa>].<ext>
@@ -128,12 +161,12 @@ export const ReportsPage: React.FC = () => {
     // Title Block
     detailSheet.mergeCells('A1:U1');
     const titleCell = detailSheet.getCell('A1');
-    titleCell.value = `TutorNote APG — Relatório Consolidado de Notas e Avaliações (${selectedSemester})`;
+    titleCell.value = `APG — Relatório Consolidado de Notas e Avaliações (${selectedSemester})`;
     titleCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
     titleCell.fill = {
       type: 'pattern',
       pattern: 'solid',
-      fgColor: { argb: 'FF1E3A8A' }, // Navy
+      fgColor: { argb: 'FFC20054' }, // Afya Magenta
     };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
@@ -185,6 +218,43 @@ export const ReportsPage: React.FC = () => {
 
     filteredSummaries.forEach((sum) => {
       const studentEvals = evaluations.filter((e) => e.studentId === sum.studentId);
+
+      if (studentEvals.length === 0) {
+        const emptyRowData = [
+          sum.studentName,
+          sum.enrollment,
+          sum.className,
+          sum.groupName,
+          '-',
+          '-',
+          'Nenhuma sessão avaliada para a mesa',
+          '-',
+          'Não avaliado',
+          'Não',
+          '-',
+          '-',
+          '-',
+          '-',
+          '-',
+          '-',
+          '-',
+          sum.unit1Grade > 0 ? Number(sum.unit1Grade.toFixed(2)) : '-',
+          sum.unit2Gross > 0 ? Number(sum.unit2Gross.toFixed(2)) : '-',
+          sum.unit2Adjusted > 0 ? Number(sum.unit2Adjusted.toFixed(2)) : '-',
+          sum.finalGrade > 0 ? Number(sum.finalGrade.toFixed(2)) : '-',
+        ];
+        const row = detailSheet.addRow(emptyRowData);
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          };
+          cell.font = { italic: true, color: { argb: 'FF64748B' } };
+        });
+        return;
+      }
 
       // Map each evaluation session
       studentEvals.forEach((evalItem) => {
@@ -250,9 +320,9 @@ export const ReportsPage: React.FC = () => {
     const summarySheet = workbook.addWorksheet('Resumo dos Estudantes');
     summarySheet.mergeCells('A1:L1');
     const sumTitle = summarySheet.getCell('A1');
-    sumTitle.value = `Resumo de Médias Finais — APG Medicina (${selectedSemester})`;
+    sumTitle.value = `APG — Resumo de Médias Finais (${selectedSemester})`;
     sumTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-    sumTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    sumTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC20054' } }; // Afya Magenta
     sumTitle.alignment = { horizontal: 'center', vertical: 'middle' };
 
     summarySheet.addRow([]);
@@ -272,7 +342,7 @@ export const ReportsPage: React.FC = () => {
     const sumHeaderRow = summarySheet.addRow(sumHeaders);
     sumHeaderRow.font = { bold: true };
     sumHeaderRow.eachCell((cell) => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE7F3' } };
       cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
     });
 
@@ -303,9 +373,9 @@ export const ReportsPage: React.FC = () => {
     const tableSheet = workbook.addWorksheet('Composição das Mesas');
     tableSheet.mergeCells('A1:F1');
     const tableTitle = tableSheet.getCell('A1');
-    tableTitle.value = `Relatório Oficial de Composição das Mesas — (${selectedSemester})`;
+    tableTitle.value = `APG — Relatório Oficial de Composição das Mesas (${selectedSemester})`;
     tableTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-    tableTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF312E81' } };
+    tableTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF980041' } }; // Afya Dark Magenta
     tableTitle.alignment = { horizontal: 'center', vertical: 'middle' };
 
     tableSheet.addRow([]);
@@ -320,7 +390,7 @@ export const ReportsPage: React.FC = () => {
     const tableHeaderRow = tableSheet.addRow(tableHeaders);
     tableHeaderRow.font = { bold: true };
     tableHeaderRow.eachCell((cell) => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE7F3' } };
       cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
     });
 
@@ -365,9 +435,9 @@ export const ReportsPage: React.FC = () => {
     // Title Row
     sheet.mergeCells('A1:M1');
     const titleCell = sheet.getCell('A1');
-    titleCell.value = `TutorNote APG — Ausências, Atestados e Segunda Chamada (${selectedSemester})`;
+    titleCell.value = `APG — Ausências, Atestados e Segunda Chamada (${selectedSemester})`;
     titleCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF991B1B' } }; // Dark Red
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC20054' } }; // Afya Magenta
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
     // Required Columns:
@@ -483,32 +553,43 @@ export const ReportsPage: React.FC = () => {
 
     const turmaName = studentSummary.className;
 
-    // Header Banner
-    doc.setFillColor(30, 58, 138); // Navy
-    doc.rect(0, 0, 210, 24, 'F');
-    doc.setTextColor(255, 255, 255);
+    // Header Banner (White Background with Afya Magenta Accents)
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, 210, 26, 'F');
+    doc.setFillColor(194, 0, 84); // #C20054 (Bottom accent line)
+    doc.rect(0, 25.2, 210, 0.8, 'F');
+
+    // Official Afya Salvador Logo seamlessly on white background
+    try {
+      doc.addImage(AFYA_SALVADOR_LOGO_JPG_BASE64, 'JPEG', 142, 6, 54, 9.05);
+    } catch {
+      // Graceful fallback for logo in PDF
+    }
+
+    doc.setTextColor(194, 0, 84); // Afya Magenta Title
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.text('TUTORNOTE APG — RELATÓRIO INDIVIDUAL DE DESEMPENHO', 14, 13);
+    doc.setFontSize(12.5);
+    doc.text('APG — RELATÓRIO INDIVIDUAL DE DESEMPENHO', 14, 11.5);
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105); // Slate 600 Subtitle
     doc.text(
-      `Semestre Letivo: ${selectedSemester}  •  Data de Emissão: ${new Date().toLocaleDateString('pt-BR')}`,
+      `${turmaName}  •  Semestre Letivo: ${selectedSemester}  •  Data de Emissão: ${new Date().toLocaleDateString('pt-BR')}`,
       14,
-      19
+      18
     );
 
     let y = 32;
 
     // 1. Identificação Acadêmica e Grupo
-    doc.setFillColor(248, 250, 252);
+    doc.setFillColor(254, 242, 248); // Soft pink tint
     doc.rect(14, y, 182, 28, 'F');
-    doc.setDrawColor(226, 232, 240);
+    doc.setDrawColor(251, 207, 232); // Rose-200 border
     doc.rect(14, y, 182, 28, 'S');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('1. Identificação Acadêmica & Grupo', 18, y + 6);
 
     doc.setFontSize(9);
@@ -541,32 +622,33 @@ export const ReportsPage: React.FC = () => {
     y += 34;
 
     // 2. Quadro Resumo de Notas (Unidade 1, Unidade 2, Final 35) & Frequência
-    doc.setFillColor(241, 245, 249);
+    doc.setFillColor(250, 250, 252);
     doc.rect(14, y, 182, 32, 'F');
-    doc.setDrawColor(203, 213, 225);
+    doc.setDrawColor(226, 232, 240);
     doc.rect(14, y, 182, 32, 'S');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('2. Frequência e Cálculo Oficial de Notas', 18, y + 6);
 
     // Box 1: U1
     doc.setFillColor(255, 255, 255);
     doc.rect(18, y + 10, 38, 17, 'F');
-    doc.setDrawColor(226, 232, 240);
+    doc.setDrawColor(251, 207, 232);
     doc.rect(18, y + 10, 38, 17, 'S');
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
     doc.text('1ª UNIDADE (MÁX 20)', 20, y + 14);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text(formatGrade(studentSummary.unit1Grade), 20, y + 23);
 
     // Box 2: U2 Bruta
     doc.setFillColor(255, 255, 255);
     doc.rect(60, y + 10, 38, 17, 'F');
+    doc.setDrawColor(251, 207, 232);
     doc.rect(60, y + 10, 38, 17, 'S');
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
@@ -574,12 +656,13 @@ export const ReportsPage: React.FC = () => {
     doc.text('2ª UNID BRUTA (MÁX 20)', 62, y + 14);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text(formatGrade(studentSummary.unit2Gross), 62, y + 23);
 
     // Box 3: U2 Ajustada
     doc.setFillColor(255, 255, 255);
     doc.rect(102, y + 10, 42, 17, 'F');
+    doc.setDrawColor(251, 207, 232);
     doc.rect(102, y + 10, 42, 17, 'S');
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
@@ -587,7 +670,7 @@ export const ReportsPage: React.FC = () => {
     doc.text('2ª UNID AJUSTADA (MÁX 15)', 104, y + 14);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(79, 70, 229); // Indigo
+    doc.setTextColor(152, 0, 65); // Afya Dark Magenta
     doc.text(formatGrade(studentSummary.unit2Adjusted), 104, y + 23);
 
     // Box 4: NOTA FINAL
@@ -608,7 +691,7 @@ export const ReportsPage: React.FC = () => {
     // 3. Frequência Resumida & Média por Critério
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('Frequência:', 14, y);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(51, 65, 85);
@@ -638,8 +721,10 @@ export const ReportsPage: React.FC = () => {
     const avgC4 = countEval > 0 ? (sumCrit4 / countEval).toFixed(1) : '-';
 
     doc.setFont('helvetica', 'bold');
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('Média por Critério (Escala 0 a 5.0):', 14, y);
     doc.setFont('helvetica', 'normal');
+    doc.setTextColor(51, 65, 85);
     doc.text(
       `1. Abertura/Pontualidade: ${avgC1}  |  2. Postura/Grupo: ${avgC2}  |  3. Domínio Técnico: ${avgC3}  |  4. Fechamento: ${avgC4}`,
       70,
@@ -651,7 +736,7 @@ export const ReportsPage: React.FC = () => {
     // 4. GRÁFICO DE EVOLUÇÃO SEMANAL (Gráfico Vetorial no jsPDF)
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('3. Gráfico de Evolução Semanal de Desempenho (Semanas 1 a 20)', 14, y);
 
     y += 4;
@@ -661,14 +746,14 @@ export const ReportsPage: React.FC = () => {
     const chartH = 32;
 
     // Draw Chart Background
-    doc.setFillColor(248, 250, 252);
+    doc.setFillColor(254, 242, 248);
     doc.rect(chartX, chartY, chartW, chartH, 'F');
-    doc.setDrawColor(226, 232, 240);
+    doc.setDrawColor(251, 207, 232);
     doc.rect(chartX, chartY, chartW, chartH, 'S');
 
     // Horizontal Y Gridlines (0, 5, 10, 15, 20)
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(0.2);
+    doc.setDrawColor(244, 114, 182);
+    doc.setLineWidth(0.15);
     for (let i = 0; i <= 4; i++) {
       const val = i * 5;
       const lineY = chartY + chartH - (val / 20) * chartH;
@@ -698,9 +783,9 @@ export const ReportsPage: React.FC = () => {
       doc.text(`S${w}`, posX - 1.5, chartY + chartH + 3.5);
     }
 
-    // Connect line segments
-    doc.setDrawColor(30, 58, 138);
-    doc.setLineWidth(0.7);
+    // Connect line segments in Afya Magenta
+    doc.setDrawColor(194, 0, 84);
+    doc.setLineWidth(0.8);
     for (let i = 0; i < weeklyPoints.length - 1; i++) {
       const pt1 = weeklyPoints[i];
       const pt2 = weeklyPoints[i + 1];
@@ -711,8 +796,8 @@ export const ReportsPage: React.FC = () => {
 
     // Draw data dots
     weeklyPoints.forEach((pt) => {
-      doc.setFillColor(30, 58, 138);
-      doc.circle(pt.x, pt.y, 1.0, 'FD');
+      doc.setFillColor(194, 0, 84);
+      doc.circle(pt.x, pt.y, 1.1, 'FD');
     });
 
     y += chartH + 8;
@@ -720,17 +805,17 @@ export const ReportsPage: React.FC = () => {
     // 5. Tabela Semanal Resumida
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('4. Histórico Semanal de Avaliações', 14, y);
 
     y += 4;
 
     // Table Header
-    doc.setFillColor(226, 232, 240);
+    doc.setFillColor(253, 242, 248);
     doc.rect(14, y, 182, 6, 'F');
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(15, 23, 42);
+    doc.setTextColor(152, 0, 65); // Afya Dark Magenta
     doc.text('Semana', 16, y + 4);
     doc.text('Unidade', 30, y + 4);
     doc.text('Caso APG', 46, y + 4);
@@ -747,7 +832,7 @@ export const ReportsPage: React.FC = () => {
       }
 
       if (idx % 2 === 1) {
-        doc.setFillColor(248, 250, 252);
+        doc.setFillColor(254, 242, 248);
         doc.rect(14, y, 182, 5.5, 'F');
       }
 
@@ -779,7 +864,7 @@ export const ReportsPage: React.FC = () => {
     // 6. Observações do Tutor e Pareceres Pedagógicos
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    doc.setTextColor(30, 58, 138);
+    doc.setTextColor(194, 0, 84); // Afya Magenta
     doc.text('5. Observações Privadas e Pareceres Pedagógicos', 14, y);
 
     y += 6;
@@ -798,14 +883,14 @@ export const ReportsPage: React.FC = () => {
           y = 20;
         }
 
-        doc.setFillColor(241, 245, 249);
+        doc.setFillColor(254, 242, 248);
         doc.rect(14, y, 182, 18, 'F');
-        doc.setDrawColor(226, 232, 240);
+        doc.setDrawColor(251, 207, 232);
         doc.rect(14, y, 182, 18, 'S');
 
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(8);
-        doc.setTextColor(30, 58, 138);
+        doc.setTextColor(194, 0, 84); // Afya Magenta
         doc.text(`Semana ${e.week} (Unidade ${e.unit}) • Papel: ${e.role}`, 18, y + 5);
 
         doc.setFont('helvetica', 'normal');
@@ -1187,79 +1272,101 @@ export const ReportsPage: React.FC = () => {
                 return (
                   <div
                     key={sum.studentId}
-                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-800 dark:bg-slate-800/40 space-y-4"
+                    className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/80 overflow-hidden"
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3 dark:border-slate-700">
-                      <div>
-                        <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                          {sum.studentName}
-                        </h4>
-                        <p className="text-xs text-slate-500">
-                          Matrícula: <code className="font-mono">{sum.enrollment}</code> • {sum.className} ({sum.groupName})
-                        </p>
+                    {/* Afya Branded Header Banner (White Background & Magenta Accents) */}
+                    <div className="bg-white dark:bg-slate-900 border-b border-pink-100 dark:border-pink-950/40 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3.5">
+                        <div className="flex items-center">
+                          <AfyaSalvadorLogo className="h-7 w-auto" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-extrabold tracking-wide uppercase text-[#C20054]">
+                            APG — Relatório Individual de Desempenho
+                          </h4>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                            <span className="font-semibold text-slate-700 dark:text-slate-300">{sum.className}</span> ({sum.groupName}) • Semestre Letivo: <span className="font-semibold text-slate-700 dark:text-slate-300">{selectedSemester}</span>
+                          </p>
+                        </div>
                       </div>
 
                       <button
                         onClick={() => runExport(() => handleExportIndividualPDF(sum.studentId))}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-[#C20054] hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300 transition-colors"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#C20054] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#980041] transition-colors shadow-xs cursor-pointer"
                       >
                         <FileText className="h-3.5 w-3.5" />
-                        <span>Baixar PDF Individual</span>
+                        <span>Baixar PDF (Afya)</span>
                       </button>
                     </div>
 
-                    {/* Quick Stats Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                      <div className="rounded-lg bg-white p-2.5 border border-slate-200 dark:bg-slate-800 dark:border-slate-700">
-                        <span className="text-[10px] font-bold uppercase text-slate-400">1ª Unidade</span>
-                        <p className="text-sm font-black text-slate-800 dark:text-slate-100">
-                          {formatGrade(sum.unit1Grade)} / 20.0
-                        </p>
+                    <div className="p-5 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+                        <div>
+                          <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                            {sum.studentName}
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            Matrícula: <code className="font-mono">{sum.enrollment}</code> • Turma de Referência: <span className="font-medium text-slate-700 dark:text-slate-300">{sum.className}</span>
+                          </p>
+                        </div>
+                        <Badge variant={sum.attendanceRate >= 75 ? 'success' : 'danger'}>
+                          Frequência: {sum.attendanceRate.toFixed(1)}%
+                        </Badge>
                       </div>
 
-                      <div className="rounded-lg bg-white p-2.5 border border-slate-200 dark:bg-slate-800 dark:border-slate-700">
-                        <span className="text-[10px] font-bold uppercase text-slate-400">2ª Unid Bruta</span>
-                        <p className="text-sm font-black text-slate-800 dark:text-slate-100">
-                          {formatGrade(sum.unit2Gross)} / 20.0
-                        </p>
+                      {/* Quick Stats Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                        <div className="rounded-lg bg-pink-50/50 p-2.5 border border-pink-100 dark:bg-pink-950/20 dark:border-pink-900/30">
+                          <span className="text-[10px] font-bold uppercase text-slate-500">1ª Unidade</span>
+                          <p className="text-sm font-black text-[#C20054]">
+                            {formatGrade(sum.unit1Grade)} / 20.0
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg bg-pink-50/50 p-2.5 border border-pink-100 dark:bg-pink-950/20 dark:border-pink-900/30">
+                          <span className="text-[10px] font-bold uppercase text-slate-500">2ª Unid Bruta</span>
+                          <p className="text-sm font-black text-[#C20054]">
+                            {formatGrade(sum.unit2Gross)} / 20.0
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-200 dark:bg-slate-800 dark:border-slate-700">
+                          <span className="text-[10px] font-bold uppercase text-slate-500">2ª Unid Ajustada</span>
+                          <p className="text-sm font-black text-[#980041] dark:text-pink-400">
+                            {formatGrade(sum.unit2Adjusted)} / 15.0
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg bg-emerald-50 p-2.5 border border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-900">
+                          <span className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">Nota Final</span>
+                          <p className="text-sm font-black text-emerald-700 dark:text-emerald-300">
+                            {formatGrade(sum.finalGrade)} / 35.0
+                          </p>
+                        </div>
                       </div>
 
-                      <div className="rounded-lg bg-white p-2.5 border border-slate-200 dark:bg-slate-800 dark:border-slate-700">
-                        <span className="text-[10px] font-bold uppercase text-slate-400">2ª Unid Ajustada</span>
-                        <p className="text-sm font-black text-indigo-600 dark:text-indigo-400">
-                          {formatGrade(sum.unit2Adjusted)} / 15.0
-                        </p>
-                      </div>
-
-                      <div className="rounded-lg bg-emerald-50 p-2.5 border border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-900">
-                        <span className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400">Nota Final</span>
-                        <p className="text-sm font-black text-emerald-700 dark:text-emerald-300">
-                          {formatGrade(sum.finalGrade)} / 35.0
-                        </p>
-                      </div>
+                      {/* Registered Feedbacks */}
+                      {sEvals.some((e) => e.pedagogicalFeedback) && (
+                        <div className="space-y-2 pt-2">
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            Pareceres Pedagógicos Registrados:
+                          </span>
+                          {sEvals
+                            .filter((e) => e.pedagogicalFeedback)
+                            .map((e) => (
+                              <div
+                                key={e.id}
+                                className="rounded-lg border border-pink-100 bg-pink-50/30 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                              >
+                                <span className="font-bold text-[#C20054] block mb-1">
+                                  Semana {e.week} • Papel: {e.role}
+                                </span>
+                                <p className="whitespace-pre-line">{e.pedagogicalFeedback}</p>
+                              </div>
+                            ))}
+                        </div>
+                      )}
                     </div>
-
-                    {/* Registered Feedbacks */}
-                    {sEvals.some((e) => e.pedagogicalFeedback) && (
-                      <div className="space-y-2 pt-2">
-                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          Pareceres Pedagógicos Registrados:
-                        </span>
-                        {sEvals
-                          .filter((e) => e.pedagogicalFeedback)
-                          .map((e) => (
-                            <div
-                              key={e.id}
-                              className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                            >
-                              <span className="font-bold text-[#C20054] dark:text-blue-400 block mb-1">
-                                Semana {e.week} • Papel: {e.role}
-                              </span>
-                              <p className="whitespace-pre-line">{e.pedagogicalFeedback}</p>
-                            </div>
-                          ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}

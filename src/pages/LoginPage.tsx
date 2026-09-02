@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { AfyaSalvadorLogo } from '../utils/afyaLogo';
 import {
   BookOpen,
   Building2,
@@ -128,16 +129,16 @@ export const LoginPage: React.FC = () => {
     <div className="min-h-screen w-full flex items-center justify-center bg-white dark:bg-black p-4 font-sans text-slate-800 dark:text-slate-100 transition-colors">
       <div className="w-full max-w-md space-y-6">
         {/* Header Branding */}
-        <div className="text-center space-y-3">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#C20054] text-white shadow-xl ring-4 ring-rose-500/20">
-            <BookOpen className="h-8 w-8 text-white" />
+        <div className="text-center space-y-4">
+          <div className="mx-auto flex items-center justify-center p-3 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-md w-fit">
+            <AfyaSalvadorLogo className="h-10 w-auto" />
           </div>
           <div>
             <span className="inline-block rounded-full bg-rose-500/10 px-3 py-1 text-[11px] font-extrabold text-[#C20054] dark:text-rose-400 uppercase tracking-wider border border-rose-500/20">
               Faculdade de Medicina — APG
             </span>
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-              <span className="text-[#C20054]">Afya</span> TutorNote
+              TutorNote APG
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
               Acesso exclusivo para docentes, tutores e avaliadores acadêmicos

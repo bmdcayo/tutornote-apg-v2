@@ -252,10 +252,12 @@ export function calculateStudentSummary(
   }
 
   const totalSessionsConsidered = presentCount + absentCount; // Atestados don't penalize attendance %
+  // If the student has not had any evaluated sessions yet (e.g. at the start of term or other tables evaluated),
+  // attendance rate defaults to 100% (0 absences) rather than 0% to avoid erroneous failure alerts.
   const attendanceRate =
     totalSessionsConsidered > 0
       ? roundTo2Decimals((presentCount / totalSessionsConsidered) * 100)
-      : 0;
+      : 100.0;
 
   // Alerts
   const alertReasons: string[] = [];

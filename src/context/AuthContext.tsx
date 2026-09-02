@@ -144,7 +144,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (dbError) {
-        console.warn('[Profile Fetch Notice] Using fallback user profile:', dbError.message);
         try {
           localStorage.setItem(`tutornote_cached_profile_${userId}`, JSON.stringify(fallbackProfile));
         } catch {}
@@ -190,8 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
 
       return { profile: mappedProfile, errorMsg: null };
-    } catch (err: any) {
-      console.warn('[Profile Fetch Notice] Network issue or exception, using fallback profile:', err?.message || err);
+    } catch {
       try {
         localStorage.setItem(`tutornote_cached_profile_${userId}`, JSON.stringify(fallbackProfile));
       } catch {}

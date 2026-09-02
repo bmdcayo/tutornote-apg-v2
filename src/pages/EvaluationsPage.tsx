@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { AttendanceStatus, Evaluation, SessionRole } from '../types';
+import { APGCase, AttendanceStatus, Evaluation, SessionRole } from '../types';
 import { Badge } from '../components/common/Badge';
 import { UnitTableFilters } from '../components/common/UnitTableFilters';
 import { SOIFilter } from '../components/common/SOIFilter';
@@ -9,6 +9,7 @@ import { ObservationModal } from '../components/ObservationModal';
 import {
   BookOpen,
   Calendar,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -19,11 +20,13 @@ import {
   Loader2,
   MessageSquare,
   Notebook,
+  Pencil,
+  Plus,
   RotateCcw,
+  Trash2,
   UserCheck,
   UserX,
   Users,
-  Plus,
   X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -53,6 +56,7 @@ export const EvaluationsPage: React.FC = () => {
     getStudentTableName,
     saveEvaluation,
     deleteEvaluation,
+    saveAPGCase,
   } = useApp();
 
   const navigate = useNavigate();
@@ -88,11 +92,73 @@ export const EvaluationsPage: React.FC = () => {
       (selectedSoiId === 'all' || caseMatchesSOI(c, activeSoiId, sois)) &&
       (!selectedSemesterId || selectedSemesterId === 'all' || !c.semesterId || c.semesterId === selectedSemesterId)
   );
-  const [selectedCaseId, setSelectedCaseId] = useState('');
-  const currentCase = availableCases.find((c) => c.id === selectedCaseId) || availableCases[0];
+
+  const [selectedProblemNumber, setSelectedProblemNumber] = useState<1 | 2>(() => {
+    try {
+      const saved = localStorage.getItem('tutornote_active_problem_number');
+      return saved === '2' ? 2 : 1;
+    } catch {
+      return 1;
+    }
+  });
+
+  const [selectedCaseId, setSelectedCaseId] = useState<string>('');
+
+  const currentCase =
+    availableCases.find((c) => c.id === selectedCaseId) ||
+    availableCases.find((c) => (c.problemNumber || c.caseNumber || 1) === selectedProblemNumber) ||
+    availableCases[0];
+
+  const curProblemNum: 1 | 2 =
+    currentCase?.problemNumber ||
+    currentCase?.caseNumber ||
+    (currentCase?.id?.toLowerCase().includes('_s2') ||
+     currentCase?.id?.toLowerCase().includes('_p2') ||
+     currentCase?.id?.toLowerCase().includes('caso_2') ||
+     currentCase?.id?.toLowerCase().includes('caso2') ||
+     currentCase?.id?.toLowerCase().includes('case2') ||
+     currentCase?.id?.toLowerCase().includes('c2') ||
+     currentCase?.id?.toLowerCase().includes('p2')
+      ? 2
+      : 1);
+
+  const handleSelectProblemNumber = (num: 1 | 2) => {
+    setSelectedProblemNumber(num);
+    try {
+      localStorage.setItem('tutornote_active_problem_number', String(num));
+    } catch {
+      // Ignore
+    }
+    const matched = availableCases.find((c) => (c.problemNumber || c.caseNumber || 1) === num);
+    if (matched) {
+      setSelectedCaseId(matched.id);
+    }
+  };
+
+  const handleSelectCase = (caseId: string) => {
+    setSelectedCaseId(caseId);
+    const matched = availableCases.find((c) => c.id === caseId);
+    if (matched) {
+      const pNum = (matched.problemNumber || matched.caseNumber || 1) === 2 ? 2 : 1;
+      setSelectedProblemNumber(pNum);
+      try {
+        localStorage.setItem('tutornote_active_problem_number', String(pNum));
+      } catch {
+        // Ignore
+      }
+    }
+  };
+
   useEffect(() => {
-    if (availableCases.length && !availableCases.some((c) => c.id === selectedCaseId)) setSelectedCaseId(availableCases[0].id);
-  }, [activeWeekNum, activeClassId, cases, selectedCaseId]);
+    if (availableCases.length) {
+      const matched =
+        availableCases.find((c) => c.id === selectedCaseId) ||
+        availableCases.find((c) => (c.problemNumber || c.caseNumber || 1) === selectedProblemNumber);
+      if (matched && matched.id !== selectedCaseId) {
+        setSelectedCaseId(matched.id);
+      }
+    }
+  }, [activeWeekNum, activeClassId, cases, selectedProblemNumber]);
 
   // Auto-sync global selectedUnit with activeWeekNum
   useEffect(() => {
@@ -103,7 +169,70 @@ export const EvaluationsPage: React.FC = () => {
   }, [activeWeekNum]);
 
   const [sessionDate, setSessionDate] = useState<string>(currentCase?.date || '2026-02-09');
+  const [dateSavedFeedback, setDateSavedFeedback] = useState<boolean>(false);
   const [showCaseDetails, setShowCaseDetails] = useState<boolean>(false);
+
+  // Sync sessionDate when the selected case changes so each case maintains its own date
+  useEffect(() => {
+    if (currentCase) {
+      setSessionDate(currentCase.date || '2026-02-09');
+    }
+  }, [currentCase?.id, currentCase?.date]);
+
+  const formatDisplayDate = (d?: string) => {
+    if (!d) return '';
+    const parts = d.split('-');
+    if (parts.length !== 3) return d;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  };
+
+  const handleSessionDateChange = async (newDate: string) => {
+    setSessionDate(newDate);
+    if (!newDate || newDate.trim().length !== 10) return;
+
+    try {
+      if (currentCase) {
+        // 1. Persist the new date for this specific case (each case of each week has its own date)
+        const saveRes = await saveAPGCase({
+          ...currentCase,
+          date: newDate,
+        });
+
+        if (saveRes.data?.id && saveRes.data.id !== selectedCaseId) {
+          setSelectedCaseId(saveRes.data.id);
+        }
+
+        // 2. Update date on any existing evaluations for this case in the current session
+        const currentProbNum = currentCase.problemNumber || currentCase.caseNumber || 1;
+        const caseEvals = evaluations.filter(
+          (e) =>
+            (e.caseId === currentCase.id ||
+              (Number(e.week) === Number(currentCase.week) &&
+                Number(e.unit) === Number(currentCase.unit) &&
+                (e.problemNumber || 1) === currentProbNum)) &&
+            (activeClassId ? e.classId === activeClassId : true)
+        );
+
+        await Promise.allSettled(
+          caseEvals.map((ev) => {
+            if (ev.date !== newDate) {
+              return saveEvaluation({
+                ...ev,
+                date: newDate,
+                updatedAt: new Date().toISOString().split('T')[0],
+              });
+            }
+            return Promise.resolve();
+          })
+        );
+
+        setDateSavedFeedback(true);
+        setTimeout(() => setDateSavedFeedback(false), 2500);
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar data da avaliação do caso:', err);
+    }
+  };
 
   // Table Notebook Modal State
   const [showNotebookModal, setShowNotebookModal] = useState<boolean>(false);
@@ -111,6 +240,9 @@ export const EvaluationsPage: React.FC = () => {
   const [notebookContributions, setNotebookContributions] = useState<TableNotebook['contributions']>([]);
   const [notebookStudentId, setNotebookStudentId] = useState('');
   const [notebookContributionText, setNotebookContributionText] = useState('');
+  const [editingContributionIndex, setEditingContributionIndex] = useState<number | null>(null);
+  const [editingStudentId, setEditingStudentId] = useState('');
+  const [editingContributionText, setEditingContributionText] = useState('');
   const [notebookError, setNotebookError] = useState('');
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [isNotebookLoaded, setIsNotebookLoaded] = useState<boolean>(false);
@@ -154,7 +286,7 @@ export const EvaluationsPage: React.FC = () => {
   const weekPad = activeWeekNum < 10 ? `0${activeWeekNum}` : `${activeWeekNum}`;
   const problemCode = `S${weekPad}P${currentCase?.problemNumber || currentCase?.caseNumber || 1}`;
 
-  const notebookKey = `notebook_${activeClassId}_u${currentUnitNum}_${activeGroupId}_w${activeWeekNum}`;
+  const notebookKey = `notebook_${activeClassId}_u${currentUnitNum}_${activeGroupId}_w${activeWeekNum}_${currentCase?.id || 'case1'}`;
 
   const selectedTable = groups.find((group) => {
     if (group.classId !== activeClassId) return false;
@@ -180,12 +312,21 @@ export const EvaluationsPage: React.FC = () => {
     }
 
     setAutoSaveStatus('saving');
+    const pNum = (currentCase.problemNumber || currentCase.caseNumber || 1) === 2 ? 2 : 1;
     const timer = setTimeout(async () => {
       try {
-        const res = await saveTableNotebook(client, activeClassId, currentCase.id, selectedTable.id, {
-          notes: notebookText,
-          contributions: notebookContributions,
-        });
+        const res = await saveTableNotebook(
+          client,
+          activeClassId,
+          currentCase.id,
+          selectedTable.id,
+          {
+            notes: notebookText,
+            contributions: notebookContributions,
+          },
+          activeWeekNum,
+          pNum
+        );
         if (res.success) {
           setAutoSaveStatus('saved');
           setNotebookError('');
@@ -198,14 +339,27 @@ export const EvaluationsPage: React.FC = () => {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [notebookText, notebookContributions, showNotebookModal, isNotebookLoaded, notebookKey, activeClassId, currentCase, selectedTable]);
+  }, [notebookText, notebookContributions, showNotebookModal, isNotebookLoaded, notebookKey, activeClassId, currentCase, selectedTable, activeWeekNum]);
 
-  const openNotebook = async () => {
+  const openNotebook = async (targetCaseId?: string) => {
+    const activeCaseToLoad = targetCaseId
+      ? availableCases.find((c) => c.id === targetCaseId) || currentCase
+      : currentCase;
+
+    const targetCaseIdStr = activeCaseToLoad?.id || 'case1';
+    const targetKey = `notebook_${activeClassId}_u${currentUnitNum}_${activeGroupId}_w${activeWeekNum}_${targetCaseIdStr}`;
+
     setNotebookError('');
     setIsNotebookLoaded(false);
 
+    if (targetCaseId && targetCaseId !== selectedCaseId) {
+      setSelectedCaseId(targetCaseId);
+      const pNum = (activeCaseToLoad?.problemNumber || activeCaseToLoad?.caseNumber || 1) === 2 ? 2 : 1;
+      setSelectedProblemNumber(pNum);
+    }
+
     // 1. Instantly load from localStorage for zero latency
-    const savedLocal = localStorage.getItem(notebookKey);
+    const savedLocal = localStorage.getItem(targetKey);
     let localNotes = '';
     let localContribs: TableNotebook['contributions'] = [];
     if (savedLocal) {
@@ -224,8 +378,16 @@ export const EvaluationsPage: React.FC = () => {
 
     // 2. Load from Supabase and reconcile with local draft
     const client = getSupabaseClient();
-    if (client && isSupabaseEnvConfigured() && currentCase && selectedTable) {
-      const result = await loadTableNotebook(client, activeClassId, currentCase.id, selectedTable.id);
+    if (client && isSupabaseEnvConfigured() && activeCaseToLoad && selectedTable) {
+      const pNum = (activeCaseToLoad.problemNumber || activeCaseToLoad.caseNumber || 1) === 2 ? 2 : 1;
+      const result = await loadTableNotebook(
+        client,
+        activeClassId,
+        activeCaseToLoad.id,
+        selectedTable.id,
+        activeWeekNum,
+        pNum
+      );
       if (result.success && result.data) {
         const remoteNotes = result.data.notes || '';
         const remoteContribs = result.data.contributions || [];
@@ -233,13 +395,21 @@ export const EvaluationsPage: React.FC = () => {
         if (!localNotes.trim() && remoteNotes.trim()) {
           setNotebookText(remoteNotes);
           setNotebookContributions(remoteContribs);
-          localStorage.setItem(notebookKey, JSON.stringify({ notes: remoteNotes, contributions: remoteContribs, updatedAt: Date.now() }));
+          localStorage.setItem(targetKey, JSON.stringify({ notes: remoteNotes, contributions: remoteContribs, updatedAt: Date.now() }));
         } else if (localNotes.trim() && !remoteNotes.trim()) {
           // Push local draft to Supabase
-          saveTableNotebook(client, activeClassId, currentCase.id, selectedTable.id, {
-            notes: localNotes,
-            contributions: localContribs,
-          });
+          saveTableNotebook(
+            client,
+            activeClassId,
+            activeCaseToLoad.id,
+            selectedTable.id,
+            {
+              notes: localNotes,
+              contributions: localContribs,
+            },
+            activeWeekNum,
+            pNum
+          );
         }
       } else if (result.error) {
         setNotebookError(result.error);
@@ -250,13 +420,59 @@ export const EvaluationsPage: React.FC = () => {
     setAutoSaveStatus('saved');
   };
 
+  const startEditingContribution = (index: number, item: { studentId: string; text: string }) => {
+    setEditingContributionIndex(index);
+    setEditingStudentId(item.studentId);
+    setEditingContributionText(item.text);
+  };
+
+  const cancelEditingContribution = () => {
+    setEditingContributionIndex(null);
+    setEditingStudentId('');
+    setEditingContributionText('');
+  };
+
+  const saveEditingContribution = () => {
+    if (editingContributionIndex === null) return;
+    if (!editingStudentId || !editingContributionText.trim()) return;
+
+    // Preserves exact index and order of all discussion points
+    setNotebookContributions((previous) =>
+      previous.map((item, idx) =>
+        idx === editingContributionIndex
+          ? { studentId: editingStudentId, text: editingContributionText.trim() }
+          : item
+      )
+    );
+    cancelEditingContribution();
+  };
+
+  const handleSwitchNotebookCase = (newCaseId: string) => {
+    if (newCaseId === currentCase?.id) return;
+    cancelEditingContribution();
+    // Save current case draft first
+    const currentData = { notes: notebookText, contributions: notebookContributions, updatedAt: Date.now() };
+    localStorage.setItem(notebookKey, JSON.stringify(currentData));
+    void openNotebook(newCaseId);
+  };
+
   const saveNotebook = async () => {
+    cancelEditingContribution();
     const notebook = { notes: notebookText, contributions: notebookContributions };
     localStorage.setItem(notebookKey, JSON.stringify({ ...notebook, updatedAt: Date.now() }));
 
     const client = getSupabaseClient();
     if (client && isSupabaseEnvConfigured() && currentCase && selectedTable) {
-      const result = await saveTableNotebook(client, activeClassId, currentCase.id, selectedTable.id, notebook);
+      const pNum = (currentCase.problemNumber || currentCase.caseNumber || 1) === 2 ? 2 : 1;
+      const result = await saveTableNotebook(
+        client,
+        activeClassId,
+        currentCase.id,
+        selectedTable.id,
+        notebook,
+        activeWeekNum,
+        pNum
+      );
       if (!result.success) {
         setNotebookError(result.error || 'Não foi possível salvar.');
         return;
@@ -273,20 +489,47 @@ export const EvaluationsPage: React.FC = () => {
 
   // Helper to find or build an evaluation item for a student in this session
   const getStudentEvaluation = (studentId: string): Evaluation => {
-    const existing = evaluations.find(
-      (e) => e.studentId === studentId && (currentCase?.id ? e.caseId === currentCase.id : (e.week === activeWeekNum && e.unit === currentUnitNum))
-    );
-    if (existing) return existing;
+    // 1. Strict match by studentId and caseId if available
+    let existing: Evaluation | undefined;
+    if (currentCase?.id) {
+      existing = evaluations.find((e) => e.studentId === studentId && e.caseId === currentCase.id);
+    }
+    if (!existing) {
+      // Match by student, week, and problem number (or explicit problemNumber)
+      existing = evaluations.find((e) => {
+        if (e.studentId !== studentId || Number(e.week) !== activeWeekNum) return false;
+        if (e.problemNumber) return e.problemNumber === curProblemNum;
+        const evalCase = cases.find((c) => c.id === e.caseId);
+        const evalProblemNum =
+          evalCase?.problemNumber ||
+          evalCase?.caseNumber ||
+          (e.caseId?.toLowerCase().includes('_s2') ||
+           e.caseId?.toLowerCase().includes('_p2') ||
+           e.caseId?.toLowerCase().includes('caso_2') ||
+           e.caseId?.toLowerCase().includes('caso2') ||
+           e.caseId?.toLowerCase().includes('case2') ||
+           e.caseId?.toLowerCase().includes('c2') ||
+           e.caseId?.toLowerCase().includes('p2')
+            ? 2
+            : 1);
+        return evalProblemNum === curProblemNum;
+      });
+    }
+
+    if (existing) {
+      return existing;
+    }
 
     const student = students.find((s) => s.id === studentId);
     return {
-      id: `eval_${studentId}_w${activeWeekNum}`,
+      id: `eval_${studentId}_w${activeWeekNum}_${currentCase?.id || (curProblemNum === 2 ? 'c2' : 'c1')}`,
       studentId,
       classId: student?.classId || activeClassId,
       groupId: student?.groupId || 'grp_a',
       week: activeWeekNum,
       unit: activeWeekNum <= 8 ? 1 : 2,
-      caseId: currentCase?.id || `case_w${activeWeekNum}`,
+      problemNumber: curProblemNum,
+      caseId: currentCase?.id || `case_w${activeWeekNum}${curProblemNum === 2 ? '_s2' : ''}`,
       date: sessionDate,
       role: 'Membro',
       attendance: 'Presente',
@@ -321,6 +564,73 @@ export const EvaluationsPage: React.FC = () => {
   const consideredSessions = presentCount + absentCount;
   const sessionAttendanceRate =
     consideredSessions > 0 ? (presentCount / consideredSessions) * 100 : 100;
+
+  // S1 and S2 case helpers for the active week
+  const s1Case = availableCases.find((c) => (c.problemNumber === 1 || c.caseNumber === 1)) || availableCases[0];
+  const s2Case = availableCases.find((c) => (c.problemNumber === 2 || c.caseNumber === 2)) || availableCases[1];
+
+  const getSessionCompletedCount = (caseItem?: APGCase) => {
+    if (!caseItem) return 0;
+    const targetProblemNum = caseItem.problemNumber || caseItem.caseNumber || 1;
+    return sessionStudents.filter((s) => {
+      const ev = evaluations.find((e) => {
+        if (e.studentId !== s.id || Number(e.week) !== activeWeekNum) return false;
+        if (e.caseId === caseItem.id) return true;
+        if (e.problemNumber) return e.problemNumber === targetProblemNum;
+        const evalCase = cases.find((c) => c.id === e.caseId);
+        const evalProblemNum = evalCase?.problemNumber || evalCase?.caseNumber || (e.caseId?.includes('_s2') ? 2 : 1);
+        return evalProblemNum === targetProblemNum;
+      });
+      return ev?.status === 'Concluído';
+    }).length;
+  };
+
+  const s1CompletedCount = getSessionCompletedCount(s1Case);
+  const s2CompletedCount = getSessionCompletedCount(s2Case);
+
+  // Single-Table Constraint per Case Rule Check
+  // In APG, a tutor conducts only 1 table per case session.
+  const conflictOtherTable = useMemo(() => {
+    if (!currentCase?.id || activeGroupId === 'all') return null;
+
+    for (const ev of evaluations) {
+      if (ev.caseId !== currentCase.id) continue;
+      if (ev.status !== 'Concluído' && ev.totalGrossScore <= 0 && ev.attendance === 'Presente') continue;
+
+      const st = students.find((s) => s.id === ev.studentId);
+      if (!st || (activeClassId && st.classId !== activeClassId)) continue;
+
+      const alloc = getStudentAllocation(st.id, currentUnitNum);
+      const studentGroupId = alloc?.groupId || st.groupId;
+
+      if (studentGroupId && studentGroupId !== activeGroupId) {
+        const otherGroup = groups.find((g) => g.id === studentGroupId);
+        const countInOtherTable = evaluations.filter((e) => {
+          if (e.caseId !== currentCase.id) return false;
+          const otherStudent = students.find((s) => s.id === e.studentId);
+          if (!otherStudent || (activeClassId && otherStudent.classId !== activeClassId)) return false;
+          const otherAlloc = getStudentAllocation(otherStudent.id, currentUnitNum);
+          return (otherAlloc?.groupId || otherStudent.groupId) === studentGroupId && (e.status === 'Concluído' || e.totalGrossScore > 0);
+        }).length;
+
+        return {
+          groupId: studentGroupId,
+          groupName:
+            otherGroup?.name ||
+            (studentGroupId === 'grp_m1'
+              ? 'Mesa 1'
+              : studentGroupId === 'grp_m2'
+              ? 'Mesa 2'
+              : studentGroupId === 'grp_m3'
+              ? 'Mesa 3'
+              : 'Outra Mesa'),
+          studentName: st.name,
+          count: countInOtherTable,
+        };
+      }
+    }
+    return null;
+  }, [evaluations, currentCase, activeGroupId, activeClassId, students, currentUnitNum, getStudentAllocation, groups]);
 
   // Reset evaluation function
   const handleResetStudentEvaluation = (studentId: string) => {
@@ -364,6 +674,38 @@ export const EvaluationsPage: React.FC = () => {
     });
   };
 
+  const caseP1 = availableCases.find((c) => (c.problemNumber || c.caseNumber || 1) === 1) || availableCases[0];
+  const caseP2 = availableCases.find((c) => (c.problemNumber || c.caseNumber) === 2) || availableCases[1];
+
+  const getProblemEvaluatedCount = (targetProb: 1 | 2) => {
+    const targetCase = targetProb === 1 ? caseP1 : caseP2;
+    return sessionStudents.filter((st) => {
+      const ev = evaluations.find((e) => {
+        if (e.studentId !== st.id || Number(e.week) !== activeWeekNum) return false;
+        if (targetCase?.id && e.caseId === targetCase.id) return true;
+        if (e.problemNumber) return e.problemNumber === targetProb;
+        const eCase = cases.find((c) => c.id === e.caseId);
+        const eNum =
+          eCase?.problemNumber ||
+          eCase?.caseNumber ||
+          (e.caseId?.toLowerCase().includes('_s2') ||
+           e.caseId?.toLowerCase().includes('_p2') ||
+           e.caseId?.toLowerCase().includes('caso_2') ||
+           e.caseId?.toLowerCase().includes('caso2') ||
+           e.caseId?.toLowerCase().includes('case2') ||
+           e.caseId?.toLowerCase().includes('c2') ||
+           e.caseId?.toLowerCase().includes('p2')
+            ? 2
+            : 1);
+        return eNum === targetProb;
+      });
+      return ev && ev.status === 'Concluído';
+    }).length;
+  };
+
+  const evaluatedCountP1 = getProblemEvaluatedCount(1);
+  const evaluatedCountP2 = getProblemEvaluatedCount(2);
+
   return (
     <div className="space-y-6">
       {/* Header & Session Selector */}
@@ -379,6 +721,55 @@ export const EvaluationsPage: React.FC = () => {
 
         {/* Filters in required order: 1. Semana -> 2. Unidade (derived) -> 3. Turma -> 4. Mesa */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* Problema 1 / Problema 2 Quick Toggle */}
+          <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              onClick={() => handleSelectProblemNumber(1)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                curProblemNum === 1
+                  ? 'bg-[#C20054] text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-white/60 dark:text-slate-300 dark:hover:bg-slate-700/60'
+              }`}
+              title="Alternar para Avaliações do Problema 1 (Caso 1)"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>Problema 1</span>
+              <span
+                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                  curProblemNum === 1
+                    ? 'bg-white/25 text-white'
+                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                }`}
+              >
+                {evaluatedCountP1}/{sessionStudents.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectProblemNumber(2)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                curProblemNum === 2
+                  ? 'bg-[#C20054] text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-white/60 dark:text-slate-300 dark:hover:bg-slate-700/60'
+              }`}
+              title="Alternar para Avaliações do Problema 2 (Caso 2)"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>Problema 2</span>
+              <span
+                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                  curProblemNum === 2
+                    ? 'bg-white/25 text-white'
+                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                }`}
+              >
+                {evaluatedCountP2}/{sessionStudents.length}
+              </span>
+            </button>
+          </div>
+
           <button
             onClick={openNotebook}
             className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition-colors"
@@ -392,7 +783,7 @@ export const EvaluationsPage: React.FC = () => {
             {/* 1. Semana Selector */}
             <div>
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
-                1. Semana / Caso
+                1. Semana
               </label>
               <select
                 value={selectedWeek}
@@ -411,10 +802,10 @@ export const EvaluationsPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">Caso</label>
+              <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">Caso / Problema</label>
               <select
                 value={currentCase?.id || ''}
-                onChange={(event) => setSelectedCaseId(event.target.value)}
+                onChange={(event) => handleSelectCase(event.target.value)}
                 className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 max-w-xs truncate"
               >
                 {availableCases.map((apgCase) => (
@@ -453,16 +844,24 @@ export const EvaluationsPage: React.FC = () => {
             </div>
 
             <div className="flex flex-col">
-              <label className="block text-[10px] uppercase font-bold text-slate-400 mb-0.5">
-                Data da Sessão
-              </label>
+              <div className="flex items-center justify-between gap-1 mb-0.5">
+                <label className="block text-[10px] uppercase font-bold text-slate-400">
+                  Data do Caso ({currentCase ? `P${currentCase.problemNumber || currentCase.caseNumber || 1}` : 'Sessão'})
+                </label>
+                {dateSavedFeedback && (
+                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 animate-in fade-in">
+                    <Check className="h-3 w-3" /> Salva
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
-                <Calendar className="h-3.5 w-3.5" />
+                <Calendar className="h-3.5 w-3.5 text-[#C20054]" />
                 <input
                   type="date"
                   value={sessionDate}
-                  onChange={(e) => setSessionDate(e.target.value)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 py-1 px-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  onChange={(e) => handleSessionDateChange(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-slate-50 py-1 px-2 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-[#C20054]/30 cursor-pointer"
+                  title="Altere a data deste caso específico da semana (cada caso pode ter sua data própria)"
                 />
               </div>
             </div>
@@ -475,7 +874,7 @@ export const EvaluationsPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-6">
           <div className="w-full max-w-4xl h-[90vh] max-h-[92vh] flex flex-col rounded-2xl bg-white p-6 shadow-2xl dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 overflow-hidden">
             <div className="flex items-start justify-between border-b border-slate-100 pb-4 dark:border-zinc-800 shrink-0">
-              <div>
+              <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <span className="inline-block rounded-md bg-rose-100 px-2.5 py-1 text-[11px] font-bold text-[#C20054] dark:bg-rose-950/60 dark:text-rose-300">
                     {activeClassName}
@@ -488,16 +887,51 @@ export const EvaluationsPage: React.FC = () => {
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
                       <CheckCircle2 className="h-3 w-3" />
-                      Salvo automaticamente
+                      Salvo automaticamente neste caso
                     </span>
                   )}
                 </div>
-                <h3 className="mt-1 text-base sm:text-lg font-extrabold text-slate-900 dark:text-slate-100">
-                  Bloco de notas — {problemCode} — {currentUnitNum}ª Unidade — {activeTableName}
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-slate-100">
+                  Bloco de notas — {problemCode}: {currentCase?.title} — {activeTableName}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Anotações salvas automaticamente em tempo real (isoladas por turma, unidade, mesa e semana).
+                  Anotações isoladas por caso da semana (Caso 1 / Caso 2), mesa e turma.
                 </p>
+
+                {/* Caso 1 / Caso 2 Quick Switcher inside Modal */}
+                {availableCases.length > 1 && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Caso da Semana:</span>
+                    <div className="inline-flex rounded-xl p-1 bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800">
+                      {s1Case && (
+                        <button
+                          type="button"
+                          onClick={() => handleSwitchNotebookCase(s1Case.id)}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                            currentCase?.id === s1Case.id
+                              ? 'bg-[#C20054] text-white shadow-2xs'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          Caso 1
+                        </button>
+                      )}
+                      {s2Case && (
+                        <button
+                          type="button"
+                          onClick={() => handleSwitchNotebookCase(s2Case.id)}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                            currentCase?.id === s2Case.id
+                              ? 'bg-[#C20054] text-white shadow-2xs'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          Caso 2
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => setShowNotebookModal(false)}
@@ -516,7 +950,7 @@ export const EvaluationsPage: React.FC = () => {
                 <textarea
                   value={notebookText}
                   onChange={(e) => setNotebookText(e.target.value)}
-                  placeholder="Digite aqui as observações, impressões pedagógicas ou pontos de atenção da mesa nesta sessão..."
+                  placeholder="Digite aqui as observações, impressões pedagógicas ou pontos de atenção da mesa neste caso..."
                   rows={4}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-800 focus:border-[#C20054] focus:ring-1 focus:ring-[#C20054] focus:outline-hidden dark:border-zinc-800 dark:bg-zinc-900 dark:text-slate-100 min-h-[100px] overflow-y-auto"
                 />
@@ -572,29 +1006,121 @@ export const EvaluationsPage: React.FC = () => {
                 </div>
 
                 {notebookContributions.length > 0 ? (
-                  <div className="max-h-[220px] overflow-y-auto space-y-2 pt-2 pr-1 border-t border-slate-200/60 dark:border-zinc-800/60">
-                    {notebookContributions.map((item, index) => (
-                      <div
-                        key={`${item.studentId}-${index}`}
-                        className="flex items-center justify-between rounded-xl bg-white dark:bg-zinc-900 px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-zinc-800 shadow-2xs hover:border-rose-200 dark:hover:border-rose-900/50 transition-colors"
-                      >
-                        <span className="break-words pr-2">
-                          <strong className="text-[#C20054] dark:text-rose-400 font-bold">
-                            {students.find((s) => s.id === item.studentId)?.name || 'Estudante'}:
-                          </strong>{' '}
-                          {item.text}
-                        </span>
-                        <button
-                          type="button"
-                          className="text-rose-600 dark:text-rose-400 hover:text-rose-800 dark:hover:text-rose-300 hover:underline font-bold text-[11px] ml-2 shrink-0 cursor-pointer"
-                          onClick={() =>
-                            setNotebookContributions((items) => items.filter((_, i) => i !== index))
-                          }
+                  <div className="max-h-[260px] overflow-y-auto space-y-2 pt-2 pr-1 border-t border-slate-200/60 dark:border-zinc-800/60">
+                    {notebookContributions.map((item, index) => {
+                      const isEditing = editingContributionIndex === index;
+
+                      if (isEditing) {
+                        return (
+                          <div
+                            key={`editing-${index}`}
+                            className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 p-3 border-2 border-amber-400 dark:border-amber-600/80 shadow-xs space-y-2"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                                <Pencil className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                                Editando ponto de discussão #{index + 1}
+                              </span>
+                              <span className="text-[10px] text-amber-700/80 dark:text-amber-400/80 italic">
+                                Pressione Enter para salvar ou Esc para cancelar
+                              </span>
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-[200px_1fr_auto]">
+                              <select
+                                value={editingStudentId}
+                                onChange={(e) => setEditingStudentId(e.target.value)}
+                                className="rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-zinc-900 text-slate-900 dark:text-slate-100 px-2.5 py-1.5 text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                              >
+                                {sessionStudents.map((student) => (
+                                  <option
+                                    key={student.id}
+                                    value={student.id}
+                                    className="bg-white text-slate-900 dark:bg-zinc-900 dark:text-slate-100"
+                                  >
+                                    {student.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                value={editingContributionText}
+                                onChange={(e) => setEditingContributionText(e.target.value)}
+                                placeholder="Texto do ponto de discussão..."
+                                autoFocus
+                                className="rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-zinc-900 text-slate-900 dark:text-slate-100 px-3 py-1.5 text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    saveEditingContribution();
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    cancelEditingContribution();
+                                  }
+                                }}
+                              />
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={saveEditingContribution}
+                                  title="Salvar alteração (mantém a posição)"
+                                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  Salvar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditingContribution}
+                                  title="Cancelar edição"
+                                  className="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={`${item.studentId}-${index}`}
+                          className="flex items-center justify-between rounded-xl bg-white dark:bg-zinc-900 px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-zinc-800 shadow-2xs hover:border-slate-300 dark:hover:border-zinc-700 transition-colors gap-2"
                         >
-                          Remover
-                        </button>
-                      </div>
-                    ))}
+                          <span className="break-words pr-2 flex-1">
+                            <strong className="text-[#C20054] dark:text-rose-400 font-bold">
+                              {students.find((s) => s.id === item.studentId)?.name || 'Estudante'}:
+                            </strong>{' '}
+                            {item.text}
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            <button
+                              type="button"
+                              title="Editar ponto de discussão"
+                              aria-label="Editar ponto de discussão"
+                              className="p-1.5 rounded-lg text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-400 dark:hover:bg-amber-900/50 transition-colors cursor-pointer flex items-center justify-center"
+                              onClick={() => startEditingContribution(index, item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              title="Remover ponto de discussão"
+                              aria-label="Remover ponto de discussão"
+                              className="p-1.5 rounded-lg text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-900/50 transition-colors cursor-pointer flex items-center justify-center"
+                              onClick={() => {
+                                if (editingContributionIndex === index) {
+                                  cancelEditingContribution();
+                                }
+                                setNotebookContributions((items) => items.filter((_, i) => i !== index));
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-4 text-xs text-slate-400 dark:text-slate-500 italic">
@@ -695,15 +1221,173 @@ export const EvaluationsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Caso 1 and Caso 2 Quick Switcher */}
+      {availableCases.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200">
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#C20054]" />
+            <span>Casos da Semana {activeWeekNum}:</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1 max-w-2xl">
+            {/* Caso 1 Button */}
+            {s1Case && (
+              <button
+                type="button"
+                onClick={() => setSelectedCaseId(s1Case.id)}
+                className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                  currentCase?.id === s1Case.id
+                    ? 'bg-indigo-900 dark:bg-indigo-600 text-white border-indigo-900 dark:border-indigo-600 shadow-xs ring-2 ring-indigo-500/30'
+                    : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-black ${
+                      currentCase?.id === s1Case.id
+                        ? 'bg-indigo-700 text-white dark:bg-indigo-800'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    C1
+                  </span>
+                  <div className="flex flex-col text-left truncate">
+                    <span className="truncate">Caso 1</span>
+                    <span
+                      className={`text-[10px] font-medium ${
+                        currentCase?.id === s1Case.id
+                          ? 'text-indigo-200'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      📅 {s1Case.date ? formatDisplayDate(s1Case.date) : 'Data a definir'}
+                    </span>
+                  </div>
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold shrink-0 ${
+                    s1CompletedCount === sessionStudents.length && sessionStudents.length > 0
+                      ? 'bg-emerald-500 text-white'
+                      : s1CompletedCount > 0
+                      ? currentCase?.id === s1Case.id
+                        ? 'bg-indigo-700 text-white'
+                        : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
+                      : 'bg-slate-200/80 dark:bg-slate-700/80 text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {s1CompletedCount}/{sessionStudents.length} avaliados
+                </span>
+              </button>
+            )}
+
+            {/* Caso 2 Button */}
+            {s2Case && (
+              <button
+                type="button"
+                onClick={() => setSelectedCaseId(s2Case.id)}
+                className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                  currentCase?.id === s2Case.id
+                    ? 'bg-indigo-900 dark:bg-indigo-600 text-white border-indigo-900 dark:border-indigo-600 shadow-xs ring-2 ring-indigo-500/30'
+                    : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-black ${
+                      currentCase?.id === s2Case.id
+                        ? 'bg-indigo-700 text-white dark:bg-indigo-800'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    C2
+                  </span>
+                  <div className="flex flex-col text-left truncate">
+                    <span className="truncate">Caso 2</span>
+                    <span
+                      className={`text-[10px] font-medium ${
+                        currentCase?.id === s2Case.id
+                          ? 'text-indigo-200'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      📅 {s2Case.date ? formatDisplayDate(s2Case.date) : 'Data a definir'}
+                    </span>
+                  </div>
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold shrink-0 ${
+                    s2CompletedCount === sessionStudents.length && sessionStudents.length > 0
+                      ? 'bg-emerald-500 text-white'
+                      : s2CompletedCount > 0
+                      ? currentCase?.id === s2Case.id
+                        ? 'bg-indigo-700 text-white'
+                        : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
+                      : 'bg-slate-200/80 dark:bg-slate-700/80 text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {s2CompletedCount}/{sessionStudents.length} avaliados
+                </span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* APG Single-Table Constraint Warning Alert */}
+      {conflictOtherTable && (
+        <div className="rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 p-4 text-amber-900 dark:text-amber-200 shadow-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-amber-200/80 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 shrink-0 mt-0.5 sm:mt-0">
+                <Users className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-amber-900 dark:text-amber-100">
+                  Regra APG: Avaliação de 1 Mesa por Caso da Semana
+                </h4>
+                <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-0.5 leading-relaxed">
+                  Você já registrou avaliações para a <strong>{conflictOtherTable.groupName}</strong> no caso{' '}
+                  <strong>{currentCase?.title}</strong> ({conflictOtherTable.count} alunos com notas/presença).
+                  No modelo tutorial, o tutor avalia uma única mesa por caso. Você pode avaliar a mesma mesa no <strong>Caso 1 e Caso 2</strong>, ou avaliar outra mesa no <strong>Caso 2</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+              {s2Case && currentCase?.id !== s2Case.id && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedCaseId(s2Case.id)}
+                  className="rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-3 py-2 transition-colors cursor-pointer shadow-xs"
+                >
+                  Alternar para Caso 2 (C2)
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelectedGroup(conflictOtherTable.groupId)}
+                className="rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-zinc-900 hover:bg-amber-100 dark:hover:bg-zinc-800 text-amber-900 dark:text-amber-200 text-xs font-bold px-3 py-2 transition-colors cursor-pointer"
+              >
+                Ir para {conflictOtherTable.groupName}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* APG Case Banner & Objectives Accordion */}
       {currentCase && (
         <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-900 to-indigo-950 p-5 text-white shadow-md dark:border-slate-800">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="rounded-md bg-indigo-800/80 px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase text-indigo-200">
-                  Caso #{currentCase.caseNumber} • Semana {currentCase.week} (
+                  Caso #{currentCase.problemNumber || currentCase.caseNumber} • Semana {currentCase.week} (
                   {currentCase.unit === 1 ? '1ª Unidade' : '2ª Unidade'})
+                </span>
+                <span className="text-xs text-indigo-200 font-semibold bg-indigo-800/40 px-2 py-0.5 rounded-md flex items-center gap-1">
+                  <Calendar className="h-3 w-3 text-rose-300" />
+                  {currentCase.date ? formatDisplayDate(currentCase.date) : 'Data a definir'}
                 </span>
                 <span className="text-xs text-indigo-300 font-medium">
                   {currentCase.time} • {currentCase.room}
@@ -785,18 +1469,31 @@ export const EvaluationsPage: React.FC = () => {
 
       {/* Session Students Interactive Table */}
       <div className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
-        <div className="border-b border-slate-100 p-4 dark:border-slate-800 flex items-center justify-between">
+        <div className="border-b border-slate-100 p-4 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-              Lista de Estudantes da Sessão (Semana {activeWeekNum})
-            </h3>
-            <p className="text-[11px] text-slate-400">
-              Clique sobre a nota de qualquer domínio para abrir a Rubrica Oficial APG em modelo Checkbox.
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider ${
+                  curProblemNum === 2
+                    ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-900/50'
+                    : 'bg-rose-100 text-[#C20054] dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900/50'
+                }`}
+              >
+                {curProblemNum === 2 ? 'Caso 2 (Problema 2)' : 'Caso 1 (Problema 1)'}
+              </span>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                Semana {activeWeekNum} — {currentCase?.title || `Problema ${curProblemNum}`}
+              </h3>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Lançamento de notas individuais para esta sessão. Clique sobre qualquer nota para abrir a Rubrica Oficial APG.
             </p>
           </div>
-          <span className="text-xs text-slate-400 font-medium">
-            Média bruta máxima por avaliação: 20.0 pontos
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-400 font-medium">
+              Média bruta máxima por avaliação: 20.0 pontos
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">

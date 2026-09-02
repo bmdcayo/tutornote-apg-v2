@@ -100,7 +100,6 @@ export async function validateTablesBelongToClass(
       .in('id', [unit1MesaId, unit2MesaId]);
 
     if (error) {
-      console.warn('[validateTablesBelongToClass Error]', error);
       return {
         valid: false,
         error: 'Não foi possível validar as mesas selecionadas no banco de dados.',
@@ -301,9 +300,9 @@ export async function fetchStudentLinkedCounts(
       .from('avaliacoes')
       .select('*', { count: 'exact', head: true })
       .eq('aluno_id', studentId);
-    if (!error) avaliacoesCount = count || 0;
-  } catch (err) {
-    console.warn('[Student Linked Counts - Avaliacoes Error]', err);
+    if (!error && count !== null) avaliacoesCount = count;
+  } catch {
+    // Gracefully fallback to local count
   }
 
   // 2. Alocações de mesa
@@ -312,9 +311,9 @@ export async function fetchStudentLinkedCounts(
       .from('alocacoes_mesa')
       .select('*', { count: 'exact', head: true })
       .eq('aluno_id', studentId);
-    if (!error) alocacoesCount = count || 0;
-  } catch (err) {
-    console.warn('[Student Linked Counts - Alocacoes Error]', err);
+    if (!error && count !== null) alocacoesCount = count;
+  } catch {
+    // Gracefully fallback to 0
   }
 
   // 3. Histórico de alocações
@@ -323,9 +322,9 @@ export async function fetchStudentLinkedCounts(
       .from('historico_alocacoes_mesa')
       .select('*', { count: 'exact', head: true })
       .eq('aluno_id', studentId);
-    if (!error) historicoCount = count || 0;
-  } catch (err) {
-    console.warn('[Student Linked Counts - Historico Error]', err);
+    if (!error && count !== null) historicoCount = count;
+  } catch {
+    // Gracefully fallback to 0
   }
 
   // 4. Contribuições
@@ -334,9 +333,9 @@ export async function fetchStudentLinkedCounts(
       .from('contribuicao_estudantes')
       .select('*', { count: 'exact', head: true })
       .eq('aluno_id', studentId);
-    if (!error) contribuicoesCount = count || 0;
-  } catch (err) {
-    console.warn('[Student Linked Counts - Contribuicoes Error]', err);
+    if (!error && count !== null) contribuicoesCount = count;
+  } catch {
+    // Gracefully fallback to 0
   }
 
   const totalAcademicRecords = avaliacoesCount + alocacoesCount + historicoCount + contribuicoesCount;

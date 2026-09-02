@@ -53,6 +53,7 @@ import {
 import {
   deleteCaseInSupabase,
   deleteEvaluationInSupabase,
+  ensureAPGCasesInSupabase,
   loadSettingsFromSupabase,
   saveCaseInSupabase,
   saveCasesInSupabaseBatch,
@@ -138,11 +139,12 @@ interface AppContextType {
   deleteEvaluation: (studentId: string, unit: number, week: number, caseId?: string) => Promise<{ success: boolean; error?: string }>;
   getStudentCalculatedSummary: (studentId: string) => StudentCalculatedSummary | null;
   getCalculatedSummaries: () => StudentCalculatedSummary[];
+  isStudentInSelectedTable: (studentId: string, unitStr: string, tableIdStr: string) => boolean;
   addStudent: (student: Omit<Student, 'id'>, unit1GroupId?: string, unit2GroupId?: string) => void;
   updateStudent: (student: Student, unit1GroupId?: string, unit2GroupId?: string) => void;
   deleteStudent: (studentId: string) => void;
   importStudents: (newStudents: Omit<Student, 'id'>[]) => void;
-  saveAPGCase: (apgCase: APGCase) => Promise<{ success: boolean; error?: string }>;
+  saveAPGCase: (apgCase: APGCase) => Promise<{ success: boolean; data?: APGCase; error?: string }>;
   importAPGCases: (casesList: APGCase[]) => Promise<{ success: boolean; count?: number; error?: string }>;
   deleteAPGCase: (caseId: string) => Promise<{ success: boolean; error?: string }>;
   saveClass: (cls: Class) => void;
@@ -188,7 +190,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [groups, setGroups] = useState<ClassGroup[]>(isDemoMode ? initialGroups : []);
   const [students, setStudents] = useState<Student[]>(isDemoMode ? initialStudents : []);
   const [cases, setCases] = useState<APGCase[]>(isDemoMode ? initialAPGCases : []);
-  const [evaluations, setEvaluations] = useState<Evaluation[]>(isDemoMode ? initialEvaluations : []);
+  const [evaluations, setEvaluations] = useState<Evaluation[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('tutornote_evaluations_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch {
+        // Ignore cache read error
+      }
+    }
+    return isDemoMode ? initialEvaluations : [];
+  });
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -353,62 +370,151 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           })
         );
 
-        // 4. Casos APG
-        const { data: csData } = await client
-          .from('casos_apg')
-          .select('*')
-          .order('semana', { ascending: true })
-          .order('numero', { ascending: true });
-        if (csData) {
-          setCases(csData.map(mapAPGCaseRow));
-        }
+        // 4. Casos APG (ensure all 20 weeks x 2 problems exist with persistent UUIDs)
+        const allLoadedCases = await ensureAPGCasesInSupabase(client, soiResult.data || []);
+        setCases(allLoadedCases);
 
         // 5. Avaliações
-        const { data: evData } = await client.from('avaliacoes').select('*');
+        const { data: evData, error: evError } = await client.from('avaliacoes').select('*');
+        if (evError) {
+          console.error('[Supabase Fetch Evaluations Error]', evError);
+        }
         if (evData && evData.length > 0) {
-          const mappedEvaluations: Evaluation[] = evData.map((e: any) => {
-              const evalUnit = Number(e.unidade || (Number(e.semana) > 8 ? 2 : 1)) as 1 | 2;
-              const studentAllocation = allAlocations.find(
-                (a: any) => a.aluno_id === e.aluno_id && Number(a.unidade) === evalUnit
-              );
-              return {
-                id: e.id,
+          const mappedEvaluations: Evaluation[] = [];
+
+          evData.forEach((e: any) => {
+            const evalUnit = Number(e.unidade || (Number(e.semana) > 8 ? 2 : 1)) as 1 | 2;
+            const studentAllocation = allAlocations.find(
+              (a: any) => a.aluno_id === e.aluno_id && Number(a.unidade) === evalUnit
+            );
+
+            const rawCriteria = e.pontuacoes_criterios || {};
+            const checkedCriteria = rawCriteria.checkedCriteria || undefined;
+
+            // Determine problemNumber (1 or 2) with priority on numero_problema column or explicit criteria metadata
+            let evalProblemNumber: 1 | 2 = 1;
+            if (e.numero_problema === 2 || e.numero_problema === 1) {
+              evalProblemNumber = e.numero_problema;
+            } else if (rawCriteria.problemNumber === 2 || rawCriteria.problemNumber === 1) {
+              evalProblemNumber = rawCriteria.problemNumber;
+            } else if (e.caso_id) {
+              const matchedCase = allLoadedCases.find((c) => c.id === e.caso_id);
+              if (matchedCase) {
+                evalProblemNumber = Number(matchedCase.problemNumber || matchedCase.caseNumber) === 2 ? 2 : 1;
+              } else {
+                const lower = String(e.caso_id).toLowerCase();
+                if (
+                  lower.includes('_s2') ||
+                  lower.includes('_p2') ||
+                  lower.includes('caso_2') ||
+                  lower.includes('caso2') ||
+                  lower.includes('case2') ||
+                  lower.includes('c2') ||
+                  lower.includes('problema2') ||
+                  lower.includes('p2')
+                ) {
+                  evalProblemNumber = 2;
+                }
+              }
+            }
+
+            // Accurately resolve caseId
+            let resolvedCaseId = e.caso_id || e.sessao_id || '';
+            const matchedByExactId = allLoadedCases.find((c) => c.id === resolvedCaseId);
+            if (matchedByExactId) {
+              resolvedCaseId = matchedByExactId.id;
+              evalProblemNumber = Number(matchedByExactId.problemNumber || matchedByExactId.caseNumber) === 2 ? 2 : 1;
+            } else {
+              const weekCases = allLoadedCases.filter((c) => c.week === Number(e.semana));
+              const assignedCase =
+                weekCases.find((c) => (c.problemNumber || c.caseNumber || 1) === evalProblemNumber) ||
+                weekCases[0];
+              resolvedCaseId = assignedCase?.id || (evalProblemNumber === 2 ? `case_w${e.semana}_s2` : `case_w${e.semana}`);
+            }
+
+            // Push main row evaluation
+            mappedEvaluations.push({
+              id: e.id,
+              studentId: e.aluno_id,
+              classId: e.turma_id || studentAllocation?.turma_id || '',
+              groupId: e.mesa_id || studentAllocation?.mesa_id || '',
+              week: Number(e.semana) || 1,
+              unit: evalUnit,
+              problemNumber: evalProblemNumber,
+              caseId: resolvedCaseId,
+              date: e.created_at || new Date().toISOString().split('T')[0],
+              role: e.papel_sessao || 'Membro',
+              attendance: e.presenca || 'Presente',
+              criterionScores: {
+                crit_1: Number(rawCriteria.crit_1 ?? e.abertura ?? 0),
+                crit_2: Number(rawCriteria.crit_2 ?? e.postura ?? 0),
+                crit_3: Number(rawCriteria.crit_3 ?? e.desempenho ?? 0),
+                crit_4: Number(rawCriteria.crit_4 ?? e.fechamento ?? 0),
+              },
+              checkedCriteria,
+              adjustmentScore: Number(e.ajuste || e.pontuacao_ajuste || 0),
+              adjustmentReason: e.motivo_ajuste || e.justificativa_ajuste || '',
+              totalGrossScore: Number(e.nota_bruta || 0),
+              performanceTags: Array.isArray(e.tags) ? e.tags : [],
+              teacherNotes: e.observacao_professor || '',
+              pedagogicalFeedback: e.parecer_ia || '',
+              status: e.status || 'Concluído',
+              updatedAt: e.updated_at || e.created_at || new Date().toISOString().split('T')[0],
+              makeupRequired: Boolean(e.segunda_chamada_necessaria),
+              makeupCompleted: Boolean(e.segunda_chamada_concluida),
+              originalAbsenceDate: e.data_falta_original || undefined,
+              makeupDate: e.data_segunda_chamada || undefined,
+            });
+
+            // If JSONB contains problem_2 data and this row was not already identified as problem 2
+            if (rawCriteria.problem_2 && typeof rawCriteria.problem_2 === 'object' && evalProblemNumber !== 2) {
+              const p2 = rawCriteria.problem_2;
+              const weekCases = allLoadedCases.filter((c) => c.week === Number(e.semana));
+              const p2Case = weekCases.find((c) => (c.problemNumber || c.caseNumber) === 2);
+              const p2CaseId = p2.caseId || p2Case?.id || `case_w${e.semana}_s2`;
+
+              mappedEvaluations.push({
+                id: `${e.id}_p2`,
                 studentId: e.aluno_id,
                 classId: e.turma_id || studentAllocation?.turma_id || '',
                 groupId: e.mesa_id || studentAllocation?.mesa_id || '',
-                week: e.semana || 1,
+                week: Number(e.semana) || 1,
                 unit: evalUnit,
-                caseId: e.caso_id || e.sessao_id || '',
-                date: e.created_at || new Date().toISOString().split('T')[0],
-                role: e.papel_sessao || 'Membro',
-                attendance: e.presenca || 'Presente',
-                criterionScores: e.pontuacoes_criterios || {
-                  crit_1: Number(e.abertura || 0),
-                  crit_2: Number(e.postura || 0),
-                  crit_3: Number(e.desempenho || 0),
-                  crit_4: Number(e.fechamento || 0),
+                problemNumber: 2,
+                caseId: p2CaseId,
+                date: p2.date || e.created_at || new Date().toISOString().split('T')[0],
+                role: p2.role || 'Membro',
+                attendance: p2.attendance || 'Presente',
+                criterionScores: {
+                  crit_1: Number(p2.criterionScores?.crit_1 ?? 0),
+                  crit_2: Number(p2.criterionScores?.crit_2 ?? 0),
+                  crit_3: Number(p2.criterionScores?.crit_3 ?? 0),
+                  crit_4: Number(p2.criterionScores?.crit_4 ?? 0),
                 },
-                adjustmentScore: Number(e.ajuste || e.pontuacao_ajuste || 0),
-                adjustmentReason: e.motivo_ajuste || e.justificativa_ajuste || '',
-                totalGrossScore: Number(e.nota_bruta || 0),
-                performanceTags: Array.isArray(e.tags) ? e.tags : [],
-                teacherNotes: e.observacao_professor || '',
-                pedagogicalFeedback: e.parecer_ia || '',
-                status: e.status || 'Concluído',
+                checkedCriteria: p2.checkedCriteria || undefined,
+                adjustmentScore: Number(p2.adjustmentScore ?? 0),
+                adjustmentReason: p2.adjustmentReason || '',
+                totalGrossScore: Number(p2.totalGrossScore ?? 0),
+                performanceTags: Array.isArray(p2.performanceTags) ? p2.performanceTags : [],
+                teacherNotes: p2.teacherNotes || '',
+                pedagogicalFeedback: p2.pedagogicalFeedback || '',
+                status: p2.status || 'Concluído',
                 updatedAt: e.updated_at || e.created_at || new Date().toISOString().split('T')[0],
-                makeupRequired: Boolean(e.segunda_chamada_necessaria),
-                makeupCompleted: Boolean(e.segunda_chamada_concluida),
-                originalAbsenceDate: e.data_falta_original || undefined,
-                makeupDate: e.data_segunda_chamada || undefined,
-              };
-            });
+              });
+            }
+          });
           setEvaluations(mappedEvaluations);
+          try {
+            localStorage.setItem('tutornote_evaluations_cache', JSON.stringify(mappedEvaluations));
+          } catch {
+            // Ignore cache update error
+          }
           const makeupAlerts = mappedEvaluations
             .filter((evaluation) => evaluation.makeupRequired && !evaluation.makeupCompleted)
             .map((evaluation) => {
               const studentName = validAlunos.find((item: any) => item.id === evaluation.studentId)?.nome || 'Estudante';
-              const caseRow = (csData || []).find((item: any) => item.id === evaluation.caseId);
-              const code = `S${String(evaluation.week).padStart(2, '0')}P${Number(caseRow?.numero) === 2 ? 2 : 1}`;
+              const caseRow = (allLoadedCases || []).find((item: any) => item.id === evaluation.caseId);
+              const code = `S${String(evaluation.week).padStart(2, '0')}P${Number(caseRow?.problemNumber || caseRow?.caseNumber) === 2 ? 2 : 1}`;
               return `Segunda chamada pendente: ${studentName} — ${code} — falta em ${evaluation.originalAbsenceDate || evaluation.date}.`;
             });
           setNotifications((previous) => Array.from(new Set([...makeupAlerts, ...previous])));
@@ -430,8 +536,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             changedBy: a.alterado_por || 'Sistema',
           }))
         );
-      } catch (err) {
-        console.warn('[Supabase Initial Data Load]', err);
+      } catch {
+        // Fallback gracefully on network error
       }
     };
 
@@ -854,31 +960,89 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       evaluation.adjustmentScore || 0
     );
 
+    const derivedProbNum: 1 | 2 =
+      evaluation.problemNumber ||
+      (evaluation.caseId
+        ? (() => {
+            const matched = cases.find((c) => c.id === evaluation.caseId);
+            if (matched) return (matched.problemNumber || matched.caseNumber || 1) === 2 ? 2 : 1;
+            const lower = evaluation.caseId.toLowerCase();
+            return lower.includes('_s2') ||
+              lower.includes('_p2') ||
+              lower.includes('caso_2') ||
+              lower.includes('caso2') ||
+              lower.includes('case2') ||
+              lower.includes('c2') ||
+              lower.includes('problema2') ||
+              lower.includes('problema_2') ||
+              lower.includes('p2')
+              ? 2
+              : 1;
+          })()
+        : 1);
+
     const updatedEval: Evaluation = {
       ...evaluation,
+      problemNumber: derivedProbNum,
       totalGrossScore: totalScore,
       updatedAt: new Date().toISOString().split('T')[0],
     };
 
-    // 1. Optimistically update local React state so UI updates instantly
-    setEvaluations((prev) => {
-      const idx = prev.findIndex((e) => e.id === evaluation.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = updatedEval;
-        return copy;
-      }
-      const sameCaseIndex = prev.findIndex(
-        (e) =>
-          e.studentId === updatedEval.studentId &&
-          (updatedEval.caseId ? e.caseId === updatedEval.caseId : e.week === updatedEval.week)
+    // Helper to test if two evaluations represent the EXACT same case and student
+    const isSameEval = (a: Evaluation, b: Evaluation): boolean => {
+      if (a.studentId !== b.studentId) return false;
+      if (a.id && b.id && a.id === b.id && isValidUuid(a.id)) return true;
+      if (a.caseId && b.caseId && a.caseId === b.caseId) return true;
+
+      // Determine problem number for a and b (1 vs 2)
+      const getProbNum = (ev: Evaluation): 1 | 2 => {
+        if (ev.problemNumber) return ev.problemNumber;
+        if (ev.caseId) {
+          const matchedCase = cases.find((c) => c.id === ev.caseId);
+          if (matchedCase) return (matchedCase.problemNumber || matchedCase.caseNumber || 1) === 2 ? 2 : 1;
+          const lower = ev.caseId.toLowerCase();
+          if (
+            lower.includes('_s2') ||
+            lower.includes('_p2') ||
+            lower.includes('caso_2') ||
+            lower.includes('caso2') ||
+            lower.includes('case2') ||
+            lower.includes('c2') ||
+            lower.includes('problema2') ||
+            lower.includes('p2')
+          ) {
+            return 2;
+          }
+        }
+        return 1;
+      };
+
+      const probA = getProbNum(a);
+      const probB = getProbNum(b);
+
+      return (
+        Number(a.week) === Number(b.week) &&
+        Number(a.unit) === Number(b.unit) &&
+        probA === probB
       );
-      if (sameCaseIndex >= 0) {
-        const copy = [...prev];
-        copy[sameCaseIndex] = updatedEval;
-        return copy;
+    };
+
+    // 1. Optimistically update local React state and localStorage so UI updates instantly
+    setEvaluations((prev) => {
+      let nextState: Evaluation[];
+      const idx = prev.findIndex((e) => isSameEval(e, updatedEval));
+      if (idx >= 0) {
+        nextState = [...prev];
+        nextState[idx] = updatedEval;
+      } else {
+        nextState = [...prev, updatedEval];
       }
-      return [...prev, updatedEval];
+      try {
+        localStorage.setItem('tutornote_evaluations_cache', JSON.stringify(nextState));
+      } catch {
+        // Ignore cache write error
+      }
+      return nextState;
     });
 
     // 2. Persist to Supabase if configured
@@ -888,14 +1052,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const result = await saveEvaluationInSupabase(client, updatedEval);
       if (result.success && result.data) {
         persistedEvaluation = result.data;
-        setEvaluations((prev) =>
-          prev.map((e) =>
-            e.id === updatedEval.id ||
-            (e.studentId === persistedEvaluation.studentId && e.caseId === persistedEvaluation.caseId)
-              ? persistedEvaluation
-              : e
-          )
-        );
+        setEvaluations((prev) => {
+          let hasUpdated = false;
+          const nextState = prev.map((e) => {
+            if (isSameEval(e, updatedEval) || isSameEval(e, persistedEvaluation) || (e.id === persistedEvaluation.id)) {
+              hasUpdated = true;
+              return persistedEvaluation;
+            }
+            return e;
+          });
+          const finalNextState = hasUpdated ? nextState : [...nextState, persistedEvaluation];
+          try {
+            localStorage.setItem('tutornote_evaluations_cache', JSON.stringify(finalNextState));
+          } catch {
+            // Ignore cache write error
+          }
+          return finalNextState;
+        });
+      } else if (!result.success) {
+        console.error('[AppContext.saveEvaluation Failed]', result.error);
+        addNotification(`Atenção ao salvar no Supabase: ${result.error || 'Erro ao sincronizar'}`);
       }
     }
 
@@ -920,16 +1096,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     week: number,
     caseId?: string
   ): Promise<{ success: boolean; error?: string }> => {
-    // 1. Optimistically remove from local state
-    setEvaluations((prev) =>
-      prev.filter(
-        (e) =>
-          !(
-            e.studentId === studentId &&
-            (caseId ? e.caseId === caseId : e.week === week)
-          )
-      )
-    );
+    // 1. Optimistically remove from local state and localStorage
+    setEvaluations((prev) => {
+      const nextState = prev.filter((e) => {
+        if (e.studentId !== studentId) return true;
+        if (caseId && e.caseId) {
+          return e.caseId !== caseId;
+        }
+        return !(Number(e.week) === Number(week) && Number(e.unit) === Number(unit));
+      });
+      try {
+        localStorage.setItem('tutornote_evaluations_cache', JSON.stringify(nextState));
+      } catch {
+        // Ignore cache write error
+      }
+      return nextState;
+    });
 
     // 2. Delete from Supabase if configured
     const client = getSupabaseClient();
@@ -1159,10 +1341,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const saveAPGCase = async (apgCase: APGCase): Promise<{ success: boolean; error?: string }> => {
+  const saveAPGCase = async (apgCase: APGCase): Promise<{ success: boolean; data?: APGCase; error?: string }> => {
     const computedUnit: 1 | 2 = apgCase.week <= 8 ? 1 : 2;
+
+    // Ensure a valid SOI ID if missing or non-UUID
+    let targetSoiId = apgCase.soiId;
+    if (!targetSoiId || !isValidUuid(targetSoiId)) {
+      if (selectedSoiId && isValidUuid(selectedSoiId)) {
+        targetSoiId = selectedSoiId;
+      } else {
+        const foundSoi = sois.find((s) => s.id && isValidUuid(s.id));
+        if (foundSoi) targetSoiId = foundSoi.id;
+      }
+    }
+
     const finalCase: APGCase = {
       ...apgCase,
+      soiId: targetSoiId,
       unit: computedUnit,
     };
 
@@ -1173,9 +1368,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const result = await saveCaseInSupabase(client, finalCase);
       if (!result.success || !result.data) return { success: false, error: result.error || 'Não foi possível salvar o caso.' };
       persistedCase = result.data;
-      if (persistedCase.soiId) {
-        setSelectedSoiId(persistedCase.soiId);
-      }
+
+      // Optimistically update local React state immediately so the UI responds without delay
+      setCases((prev) => {
+        const idx = prev.findIndex(
+          (c) =>
+            c.id === finalCase.id ||
+            c.id === persistedCase.id ||
+            (c.week === finalCase.week &&
+              (c.problemNumber || c.caseNumber || 1) === (finalCase.problemNumber || finalCase.caseNumber || 1) &&
+              (finalCase.soiId ? c.soiId === finalCase.soiId : true))
+        );
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = persistedCase;
+          return copy;
+        }
+        return [...prev, persistedCase];
+      });
+
       const reloadRes = await reloadAPGCases();
       if (!reloadRes.success) {
         return { success: false, error: reloadRes.error || 'Caso salvo, mas falhou ao recarregar lista.' };
@@ -1191,7 +1402,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [...prev, { ...persistedCase, id: `case_${Date.now()}` }];
       });
     }
-    return { success: true };
+    return { success: true, data: persistedCase };
   };
 
   const importAPGCases = async (casesList: APGCase[]): Promise<{ success: boolean; count?: number; error?: string }> => {
@@ -1494,8 +1705,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         throw new Error(data.error || 'Erro na resposta do serviço de IA.');
       }
-    } catch (err: any) {
-      console.warn('Erro ao chamar Gemini, fallback local acionado:', err);
+    } catch {
       return `1. Síntese do desempenho: O(A) discente participou ativamente da sessão da Semana ${evaluation.week} exercendo o papel de ${evaluation.role}.\n2. Pontos fortes: Demonstrou engajamento nas discussões e colaboração com o grupo durante o caso.\n3. Oportunidades de melhoria: Aprofundar a fundamentação teórica referente aos objetivos do caso APG.\n4. Orientação para a próxima sessão: Manter a pontualidade e aperfeiçoar a síntese integradora dos objetivos.`;
     }
   };
@@ -1559,6 +1769,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteEvaluation,
         getStudentCalculatedSummary,
         getCalculatedSummaries,
+        isStudentInSelectedTable,
         refreshStudents,
         updateStudentFull,
         updateStudentTablesFull,

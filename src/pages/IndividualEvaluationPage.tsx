@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { AttendanceStatus, Evaluation, SessionRole } from '../types';
@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Award,
   Bot,
+  Calendar,
   CheckCircle2,
   Save,
   Sparkles,
@@ -32,6 +33,7 @@ export const IndividualEvaluationPage: React.FC = () => {
     settings,
     getStudentAllocation,
     saveEvaluation,
+    saveAPGCase,
     generateGeminiFeedback,
   } = useApp();
 
@@ -52,16 +54,38 @@ export const IndividualEvaluationPage: React.FC = () => {
       ? groupStudents[currentStudentIdx + 1]
       : null;
 
+  // Helper to reliably find evaluation for this student and case
+  const findEvaluationForStudentAndCase = (sId: string) => {
+    const targetProblemNum =
+      currentCase?.problemNumber ||
+      currentCase?.caseNumber ||
+      (currentCase?.id?.includes('_s2') || currentCase?.id?.includes('_p2') ? 2 : 1);
+
+    if (currentCase?.id) {
+      const byExactId = evaluations.find((e) => e.studentId === sId && e.caseId === currentCase.id);
+      if (byExactId) return byExactId;
+    }
+
+    return evaluations.find((e) => {
+      if (e.studentId !== sId || Number(e.week) !== weekNum) return false;
+      if (e.problemNumber) return e.problemNumber === targetProblemNum;
+      const evalCase = cases.find((c) => c.id === e.caseId);
+      const evalProblemNum =
+        evalCase?.problemNumber ||
+        evalCase?.caseNumber ||
+        (e.caseId?.includes('_s2') || e.caseId?.includes('_p2') ? 2 : 1);
+      return evalProblemNum === targetProblemNum;
+    });
+  };
+
   // Completed evaluations in this session for progress
   const completedInSessionCount = groupStudents.filter((s) => {
-    const ev = evaluations.find((e) => e.studentId === s.id && e.caseId === currentCase?.id);
+    const ev = findEvaluationForStudentAndCase(s.id);
     return ev?.status === 'Concluído';
   }).length;
 
   // Existing evaluation or default state
-  const existingEval = evaluations.find(
-    (e) => e.studentId === studentId && e.caseId === currentCase?.id
-  );
+  const existingEval = findEvaluationForStudentAndCase(studentId || '');
 
   const [role, setRole] = useState<SessionRole>(existingEval?.role || 'Membro');
   const [attendance, setAttendance] = useState<AttendanceStatus>(
@@ -86,8 +110,19 @@ export const IndividualEvaluationPage: React.FC = () => {
   const [pedagogicalFeedback, setPedagogicalFeedback] = useState<string>(
     existingEval?.pedagogicalFeedback || ''
   );
+  const [evaluationDate, setEvaluationDate] = useState<string>(
+    existingEval?.date || currentCase?.date || new Date().toISOString().split('T')[0]
+  );
   const [isAiGenerating, setIsAiGenerating] = useState<boolean>(false);
   const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    if (existingEval?.date) {
+      setEvaluationDate(existingEval.date);
+    } else if (currentCase?.date) {
+      setEvaluationDate(currentCase.date);
+    }
+  }, [existingEval?.date, currentCase?.date]);
 
   if (!student) {
     return (
@@ -135,7 +170,7 @@ export const IndividualEvaluationPage: React.FC = () => {
     setIsAiGenerating(true);
     try {
       const dummyEval: Evaluation = {
-        id: existingEval?.id || `eval_${student.id}_w${weekNum}`,
+        id: existingEval?.id || `eval_${student.id}_w${weekNum}_${currentCase?.id || 'c1'}`,
         studentId: student.id,
         classId: student.classId,
         groupId: unitAllocation?.groupId || student.groupId,
@@ -170,14 +205,14 @@ export const IndividualEvaluationPage: React.FC = () => {
     const isCertificate = attendance === 'Atestado';
     const isCompletingMakeup = Boolean(existingEval?.makeupRequired) && attendance === 'Presente' && status === 'Concluído';
     const evalData: Evaluation = {
-      id: existingEval?.id || `eval_${student.id}_w${weekNum}`,
+      id: existingEval?.id || `eval_${student.id}_w${weekNum}_${currentCase?.id || 'c1'}`,
       studentId: student.id,
       classId: student.classId,
       groupId: unitAllocation?.groupId || student.groupId,
       week: weekNum,
       unit: unitNum,
       caseId: currentCase?.id || '',
-      date: existingEval?.date || new Date().toISOString().split('T')[0],
+      date: evaluationDate,
       role,
       attendance,
       criterionScores,
@@ -191,9 +226,13 @@ export const IndividualEvaluationPage: React.FC = () => {
       updatedAt: new Date().toISOString().split('T')[0],
       makeupRequired: isCertificate || existingEval?.makeupRequired || false,
       makeupCompleted: isCompletingMakeup || existingEval?.makeupCompleted || false,
-      originalAbsenceDate: isCertificate ? existingEval?.originalAbsenceDate || new Date().toISOString().split('T')[0] : existingEval?.originalAbsenceDate,
-      makeupDate: isCompletingMakeup ? new Date().toISOString().split('T')[0] : existingEval?.makeupDate,
+      originalAbsenceDate: isCertificate ? existingEval?.originalAbsenceDate || evaluationDate : existingEval?.originalAbsenceDate,
+      makeupDate: isCompletingMakeup ? evaluationDate : existingEval?.makeupDate,
     };
+
+    if (currentCase && currentCase.date !== evaluationDate) {
+      void saveAPGCase({ ...currentCase, date: evaluationDate });
+    }
 
     const result = await saveEvaluation(evalData);
     if (!result.success) { setSaveError(result.error || 'Não foi possível salvar a avaliação.'); return; }
@@ -255,9 +294,9 @@ export const IndividualEvaluationPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Role & Attendance Pickers */}
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
+        {/* Role, Attendance & Date Pickers */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-5">
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
               Papel Desempenhado na Sessão
             </label>
@@ -279,7 +318,7 @@ export const IndividualEvaluationPage: React.FC = () => {
             </div>
           </div>
 
-          <div>
+          <div className="lg:col-span-4">
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
               Status de Presença
             </label>
@@ -308,6 +347,22 @@ export const IndividualEvaluationPage: React.FC = () => {
                   {item.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-3">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Data da Avaliação do Caso
+            </label>
+            <div className="flex items-center gap-2 h-[38px] px-3 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800">
+              <Calendar className="h-4 w-4 text-[#C20054] shrink-0" />
+              <input
+                type="date"
+                value={evaluationDate}
+                onChange={(e) => setEvaluationDate(e.target.value)}
+                className="w-full bg-transparent text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-hidden cursor-pointer"
+                title="Data de avaliação deste caso específico"
+              />
             </div>
           </div>
         </div>

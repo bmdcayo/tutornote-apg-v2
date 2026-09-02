@@ -154,6 +154,7 @@ export interface Evaluation {
   groupId: string;
   week: number; // 1..20
   unit: 1 | 2;
+  problemNumber?: 1 | 2; // Explicit 1 (Problema 1) or 2 (Problema 2)
   caseId: string;
   date: string;
   role: SessionRole;

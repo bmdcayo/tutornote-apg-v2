@@ -197,17 +197,40 @@ async function runDriveUpload() {
   if (saKeyRaw) {
     try {
       let saJson: GoogleServiceAccount;
-      if (saKeyRaw.trim().startsWith('{')) {
-        saJson = JSON.parse(saKeyRaw);
+      const cleanKey = saKeyRaw.trim();
+      if (cleanKey.startsWith('{') && cleanKey.endsWith('}')) {
+        saJson = JSON.parse(cleanKey);
+      } else if (cleanKey.startsWith('{')) {
+        saJson = JSON.parse(cleanKey);
       } else {
-        // Might be base64 encoded
-        const decoded = Buffer.from(saKeyRaw, 'base64').toString('utf-8');
-        saJson = JSON.parse(decoded);
+        // Might be base64 encoded or have surrounding quotes
+        let candidate = cleanKey;
+        if (candidate.startsWith('"') && candidate.endsWith('"')) {
+          candidate = candidate.slice(1, -1);
+        }
+        try {
+          const decoded = Buffer.from(candidate, 'base64').toString('utf-8');
+          if (decoded.trim().startsWith('{')) {
+            saJson = JSON.parse(decoded);
+          } else {
+            throw new Error('Conteúdo não é JSON nem Base64 de JSON');
+          }
+        } catch {
+          saJson = JSON.parse(candidate);
+        }
       }
+
+      if (!saJson.client_email || !saJson.private_key) {
+        throw new Error(
+          'O JSON da Service Account precisa conter os campos "client_email" e "private_key". Verifique o conteúdo do Secret GDRIVE_SERVICE_ACCOUNT_KEY.'
+        );
+      }
+
       accessToken = await getAccessTokenFromServiceAccount(saJson);
       console.log('✅ Autenticado com Google Drive via Service Account.');
     } catch (err: any) {
       console.error('❌ Erro na autenticação com Service Account do Google Drive:', err.message);
+      console.error('👉 Dica: Certifique-se de que copiou TODO o texto do arquivo .json baixado no Google Cloud (incluindo as chaves { e }).');
       process.exit(1);
     }
   } else if (clientId && clientSecret && refreshToken) {
