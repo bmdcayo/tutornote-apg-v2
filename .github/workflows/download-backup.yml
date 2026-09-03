@@ -1,10 +1,7 @@
 name: 'Gerar Backup para Download'
 
 on:
-  # Disparo manual pela aba Actions
   workflow_dispatch:
-
-  # Agendamento automático: Terças e Sextas às 17:00 UTC (14:00 Brasília)
   schedule:
     - cron: '0 17 * * 2,5'
 
@@ -17,20 +14,221 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Clonar Repositório
-        uses: actions/checkout@v4
-
       - name: 🟢 Configurar Ambiente Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: 🗄️ Extrair Dados do Supabase
+      - name: 🗄️ Extrair Dados do Banco Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
         run: |
-          node scripts/download-backup.mjs
+          cat << 'EOF' > run_backup.mjs
+          import fs from 'fs';
+          import path from 'path';
+
+          const TABLES_TO_BACKUP = [
+            'semestres',
+            'sois',
+            'turmas',
+            'mesas',
+            'alunos',
+            'alocacoes_mesa',
+            'historico_alocacoes_mesa',
+            'contribuicao_estudantes',
+            'casos_apg',
+            'avaliacoes',
+            'anotacoes_mesa',
+            'configuracoes',
+            'profiles',
+          ];
+
+          const FALLBACK_URL = 'https://ovpgqbkqyiwlmsehpaew.supabase.co';
+          const FALLBACK_KEY = 'sb_publishable_QT1iVUk-D39dBCK-47kcFg_tAhPVgg_';
+
+          const SUPABASE_URL = (
+            process.env.SUPABASE_URL ||
+            process.env.VITE_SUPABASE_URL ||
+            FALLBACK_URL
+          ).replace(/\/+$/, '');
+
+          const SUPABASE_KEY = (
+            process.env.SUPABASE_SERVICE_ROLE_KEY ||
+            process.env.SUPABASE_KEY ||
+            process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+            process.env.SUPABASE_ANON_KEY ||
+            FALLBACK_KEY
+          );
+
+          function escapeSqlValue(val) {
+            if (val === null || val === undefined) return 'NULL';
+            if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+            if (typeof val === 'object') {
+              return "'" + JSON.stringify(val).replace(/'/g, "''") + "'::jsonb";
+            }
+            return "'" + String(val).replace(/'/g, "''") + "'";
+          }
+
+          function generateSqlDump(results, timestamp) {
+            let sql = '-- ==========================================================\n';
+            sql += '-- TutorNote APG - Snapshot de Backup do Banco de Dados\n';
+            sql += '-- Gerado em: ' + timestamp + '\n';
+            sql += '-- ==========================================================\n\n';
+
+            for (const table of results) {
+              if (table.records.length === 0) continue;
+
+              sql += '-- ---------------------------------------------------------\n';
+              sql += '-- Tabela: ' + table.tableName + ' (' + table.records.length + ' registros)\n';
+              sql += '-- ---------------------------------------------------------\n';
+
+              for (const record of table.records) {
+                const columns = Object.keys(record);
+                const values = columns.map((col) => escapeSqlValue(record[col]));
+                sql += 'INSERT INTO public.' + table.tableName + ' (' + columns.join(', ') + ') VALUES (' + values.join(', ') + ') ON CONFLICT DO NOTHING;\n';
+              }
+              sql += '\n';
+            }
+
+            return sql;
+          }
+
+          async function fetchTable(tableName) {
+            const PAGE_SIZE = 1000;
+            let allRecords = [];
+            let from = 0;
+            let hasMore = true;
+
+            try {
+              while (hasMore) {
+                const to = from + PAGE_SIZE - 1;
+                const url = SUPABASE_URL + '/rest/v1/' + tableName + '?select=*';
+                const response = await fetch(url, {
+                  method: 'GET',
+                  headers: {
+                    apikey: SUPABASE_KEY,
+                    Authorization: 'Bearer ' + SUPABASE_KEY,
+                    'Range-Unit': 'items',
+                    Range: from + '-' + to,
+                    Prefer: 'count=exact',
+                  },
+                });
+
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  return {
+                    tableName,
+                    count: 0,
+                    records: [],
+                    error: 'HTTP ' + response.status + ': ' + errorText,
+                  };
+                }
+
+                const data = await response.json();
+                if (Array.isArray(data) && data.length > 0) {
+                  allRecords = allRecords.concat(data);
+                  from += PAGE_SIZE;
+                  if (data.length < PAGE_SIZE) {
+                    hasMore = false;
+                  }
+                } else {
+                  hasMore = false;
+                }
+              }
+
+              return {
+                tableName,
+                count: allRecords.length,
+                records: allRecords,
+              };
+            } catch (err) {
+              return {
+                tableName,
+                count: 0,
+                records: [],
+                error: err?.message || String(err),
+              };
+            }
+          }
+
+          async function main() {
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0];
+            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const backupId = 'tutornote_backup_' + dateStr + '_' + timeStr;
+
+            console.log('Iniciando extração do banco...');
+            const backupsDir = path.resolve(process.cwd(), 'backups');
+            const individualDir = path.join(backupsDir, 'tabelas');
+            if (!fs.existsSync(individualDir)) {
+              fs.mkdirSync(individualDir, { recursive: true });
+            }
+
+            const results = [];
+            let totalRecords = 0;
+
+            for (const tableName of TABLES_TO_BACKUP) {
+              const result = await fetchTable(tableName);
+              results.push(result);
+              if (!result.error) {
+                totalRecords += result.count;
+                fs.writeFileSync(
+                  path.join(individualDir, tableName + '.json'),
+                  JSON.stringify(result.records, null, 2),
+                  'utf-8'
+                );
+              }
+            }
+
+            const consolidatedPayload = {
+              metadata: {
+                backupId,
+                createdAt: now.toISOString(),
+                timestamp: now.getTime(),
+                totalTables: TABLES_TO_BACKUP.length,
+                totalRecords,
+                supabaseUrl: SUPABASE_URL,
+              },
+              tables: results.reduce((acc, curr) => {
+                acc[curr.tableName] = {
+                  count: curr.count,
+                  records: curr.records,
+                  error: curr.error,
+                };
+                return acc;
+              }, {}),
+            };
+
+            const jsonFilename = backupId + '.json';
+            fs.writeFileSync(path.join(backupsDir, jsonFilename), JSON.stringify(consolidatedPayload, null, 2), 'utf-8');
+
+            const sqlDump = generateSqlDump(results, now.toISOString());
+            const sqlFilename = backupId + '.sql';
+            fs.writeFileSync(path.join(backupsDir, sqlFilename), sqlDump, 'utf-8');
+
+            const summaryMarkdown = '### 📥 Backup do Banco de Dados Gerado com Sucesso!\n\n' +
+              '- **Identificador:** `' + backupId + '`\n' +
+              '- **Total de Registros Extraídos:** **' + totalRecords + '**\n\n' +
+              '#### Arquivos Disponíveis no Download (seção Artifacts):\n' +
+              '- `' + jsonFilename + '` (Formato JSON completo)\n' +
+              '- `' + sqlFilename + '` (Script SQL com comandos INSERT)\n' +
+              '- Pasta `tabelas/` contendo cada tabela individualmente em JSON\n\n' +
+              '| Tabela | Registros | Status |\n' +
+              '| :--- | :---: | :--- |\n' +
+              results.map((r) => '| `' + r.tableName + '` | **' + r.count + '** | ' + (r.error ? '⚠️ ' + r.error : '✅ OK') + ' |').join('\n') + '\n';
+
+            fs.writeFileSync(path.join(backupsDir, 'backup_summary.md'), summaryMarkdown, 'utf-8');
+            console.log('✅ Backup finalizado com sucesso! Total de registros:', totalRecords);
+          }
+
+          main().catch((err) => {
+            console.error('Erro na extração:', err);
+            process.exit(1);
+          });
+          EOF
+
+          node run_backup.mjs
 
       - name: 📦 Disponibilizar Arquivo ZIP para Download (Artifacts)
         uses: actions/upload-artifact@v4
