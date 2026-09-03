@@ -1,0 +1,47 @@
+name: 'Gerar Backup para Download'
+
+on:
+  # Disparo manual pela aba Actions
+  workflow_dispatch:
+
+  # Agendamento automático: Terças e Sextas às 17:00 UTC (14:00 Brasília)
+  schedule:
+    - cron: '0 17 * * 2,5'
+
+permissions:
+  contents: read
+
+jobs:
+  export-backup:
+    name: 'Extrair Dados e Criar Arquivo para Download'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Clonar Repositório
+        uses: actions/checkout@v4
+
+      - name: 🟢 Configurar Ambiente Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 🗄️ Extrair Dados do Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
+        run: |
+          node scripts/download-backup.mjs
+
+      - name: 📦 Disponibilizar Arquivo ZIP para Download (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-apg-supabase
+          path: backups/
+          retention-days: 90
+
+      - name: 📋 Exibir Tabela de Resumo
+        if: always()
+        run: |
+          if [ -f backups/backup_summary.md ]; then
+            cat backups/backup_summary.md >> $GITHUB_STEP_SUMMARY
+          fi
